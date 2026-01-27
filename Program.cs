@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Configuration;
 using System.Data.SqlClient;
 using System.Net.Http;
 using System.Text;
@@ -18,31 +17,47 @@ namespace SubiektConnector
         public DateTime DataWystawienia { get; set; }
     }
 
+    public class DokumentPayload
+    {
+        [JsonProperty("dok_id")]
+        public int DokId { get; set; }
+
+        [JsonProperty("dok_nr_pelny")]
+        public string DokNrPelny { get; set; }
+
+        [JsonProperty("dok_data_wyst")]
+        public string DokDataWyst { get; set; }
+
+        [JsonProperty("pozycje")]
+        public List<PozycjaPayload> Pozycje { get; set; }
+    }
+
+    public class PozycjaPayload
+    {
+        [JsonProperty("symbol")]
+        public string Symbol { get; set; }
+
+        [JsonProperty("nazwa")]
+        public string Nazwa { get; set; }
+
+        [JsonProperty("cena_oryginalna_netto")]
+        public decimal CenaOryginalnaNetto { get; set; }
+    }
+
     internal class Program
     {
+        private const string N8N_URL = "https://example.com/webhook/test";
+
         private static void Main(string[] args)
         {
-            var connectionString = ConfigurationManager.ConnectionStrings["SubiektDB"]?.ConnectionString;
-            var n8nUrl = ConfigurationManager.AppSettings["N8nUrl"];
+            var connectionString = "Server=SERVER_NAME;Database=DATABASE_NAME;User Id=USER_NAME;Password=PASSWORD;";
 
             Console.WriteLine("Łączenie z bazą...");
 
             try
             {
-                if (string.IsNullOrWhiteSpace(connectionString))
-                {
-                    Console.WriteLine("Brak connection stringa: SubiektDB");
-                    return;
-                }
-
-                if (string.IsNullOrWhiteSpace(n8nUrl))
-                {
-                    Console.WriteLine("Brak ustawienia appSettings: N8nUrl");
-                    return;
-                }
-
                 var pozycje = new List<PozycjaDoZmiany>();
-                var dokIds = new HashSet<int>();
+                var dokumenty = new Dictionary<int, DokumentPayload>();
 
                 using (var connection = new SqlConnection(connectionString))
                 using (var command = new SqlCommand(GetSqlQuery(), connection))
@@ -64,20 +79,37 @@ namespace SubiektConnector
                             };
 
                             pozycje.Add(pozycja);
-                            dokIds.Add(pozycja.DokId);
+                            if (!dokumenty.TryGetValue(pozycja.DokId, out var dokument))
+                            {
+                                dokument = new DokumentPayload
+                                {
+                                    DokId = pozycja.DokId,
+                                    DokNrPelny = pozycja.NumerPelny,
+                                    DokDataWyst = pozycja.DataWystawienia.ToString("dd.MM.yyyy"),
+                                    Pozycje = new List<PozycjaPayload>()
+                                };
+                                dokumenty.Add(pozycja.DokId, dokument);
+                            }
+
+                            dokument.Pozycje.Add(new PozycjaPayload
+                            {
+                                Symbol = pozycja.SymbolTowaru,
+                                Nazwa = pozycja.NazwaTowaru,
+                                CenaOryginalnaNetto = pozycja.StaraCena
+                            });
                         }
                     }
                 }
 
-                Console.WriteLine("Znaleziono " + dokIds.Count + " dokumentów.");
+                Console.WriteLine("Znaleziono " + dokumenty.Count + " dokumentów.");
 
-                var payload = JsonConvert.SerializeObject(new List<int>(dokIds));
+                var payload = JsonConvert.SerializeObject(new List<DokumentPayload>(dokumenty.Values));
                 Console.WriteLine("Wysyłanie do n8n...");
 
                 using (var httpClient = new HttpClient())
                 using (var content = new StringContent(payload, Encoding.UTF8, "application/json"))
                 {
-                    var response = httpClient.PostAsync(n8nUrl, content).GetAwaiter().GetResult();
+                    var response = httpClient.PostAsync(N8N_URL, content).GetAwaiter().GetResult();
                     var responseBody = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
 
                     Console.WriteLine("Odpowiedź serwera: " + (int)response.StatusCode + " " + response.ReasonPhrase);
