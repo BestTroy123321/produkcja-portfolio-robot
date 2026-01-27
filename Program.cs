@@ -4,6 +4,8 @@ using System.Configuration;
 using System.Data.SqlClient;
 using System.Net.Http;
 using System.Text;
+using System.Runtime.InteropServices;
+using System.Threading;
 using Newtonsoft.Json;
 
 namespace SubiektConnector
@@ -149,12 +151,7 @@ namespace SubiektConnector
                     if (!string.IsNullOrWhiteSpace(responseBody))
                     {
                         Console.WriteLine("Treść odpowiedzi: " + responseBody);
-                        var subiekt = ZalogujSubiektGT();
-                        if (subiekt != null)
-                        {
-                            PrzetworzDokumenty(responseBody, subiekt);
-                            ZakonczSubiekt(subiekt);
-                        }
+                        ZrealizujZmianyWSferze(responseBody);
                     }
                 }
             }
@@ -280,6 +277,54 @@ ORDER BY d.dok_DataWyst DESC";
             }
 
             return defaultValue;
+        }
+
+        private static void ZrealizujZmianyWSferze(string jsonResponse)
+        {
+            OpenComConnection(subiekt =>
+            {
+                PrzetworzDokumenty(jsonResponse, subiekt);
+            });
+        }
+
+        private static void OpenComConnection(Action<dynamic> useComObject)
+        {
+            var thread = new Thread(() =>
+            {
+                dynamic subiekt = null;
+                try
+                {
+                    subiekt = ZalogujSubiektGT();
+                    if (subiekt == null)
+                    {
+                        Console.WriteLine("Logowanie do Sfery nie powiodło się");
+                        return;
+                    }
+
+                    try
+                    {
+                        subiekt.Okno.Widoczne = false;
+                    }
+                    catch { }
+
+                    useComObject(subiekt);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("Błąd Sfery: " + ex.Message);
+                }
+                finally
+                {
+                    if (subiekt != null)
+                    {
+                        try { ZakonczSubiekt(subiekt); } catch { }
+                        try { Marshal.ReleaseComObject(subiekt); } catch { }
+                    }
+                }
+            });
+            thread.SetApartmentState(ApartmentState.STA);
+            thread.Start();
+            thread.Join();
         }
 
         public static void PrzetworzDokumenty(string jsonResponse, dynamic subiekt)
