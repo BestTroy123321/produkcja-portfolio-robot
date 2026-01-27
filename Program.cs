@@ -6,6 +6,7 @@ using System.Net.Http;
 using System.Text;
 using System.Runtime.InteropServices;
 using System.Threading;
+using System.Reflection;
 using Newtonsoft.Json;
 
 namespace SubiektConnector
@@ -349,7 +350,8 @@ ORDER BY d.dok_DataWyst DESC";
                         for (var i = 1; i <= liczbaPozycji; i++)
                         {
                             var poz = dok.Pozycje.Element(i);
-                            if (poz.Towar.Symbol == pozycja.Symbol)
+                            var symbolTowaru = PobierzSymbolPozycji(poz);
+                            if (!string.IsNullOrWhiteSpace(symbolTowaru) && symbolTowaru == pozycja.Symbol)
                             {
                                 poz.CenaNettoPrzedRabatem = pozycja.NowaCena;
                             }
@@ -365,6 +367,59 @@ ORDER BY d.dok_DataWyst DESC";
                 {
                     Console.WriteLine("Aktualizacja ZD " + dokument.DokNrPelny + " [BŁĄD] " + ex.Message);
                 }
+            }
+        }
+
+        private static string PobierzSymbolPozycji(dynamic pozycja)
+        {
+            var symbol = PobierzWartoscString(pozycja, "TowarSymbol");
+            if (!string.IsNullOrWhiteSpace(symbol))
+            {
+                return symbol;
+            }
+
+            var towar = PobierzWartoscObject(pozycja, "Towar");
+            if (towar != null)
+            {
+                symbol = PobierzWartoscString(towar, "Symbol");
+                if (!string.IsNullOrWhiteSpace(symbol))
+                {
+                    return symbol;
+                }
+            }
+
+            symbol = PobierzWartoscString(pozycja, "Symbol");
+            if (!string.IsNullOrWhiteSpace(symbol))
+            {
+                return symbol;
+            }
+
+            symbol = PobierzWartoscString(pozycja, "SymbolTowaru");
+            return symbol;
+        }
+
+        private static string PobierzWartoscString(dynamic obiekt, string nazwa)
+        {
+            try
+            {
+                var value = obiekt.GetType().InvokeMember(nazwa, BindingFlags.GetProperty, null, obiekt, null);
+                return value != null ? value.ToString() : null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static object PobierzWartoscObject(dynamic obiekt, string nazwa)
+        {
+            try
+            {
+                return obiekt.GetType().InvokeMember(nazwa, BindingFlags.GetProperty, null, obiekt, null);
+            }
+            catch
+            {
+                return null;
             }
         }
     }
