@@ -5,6 +5,7 @@
     <RootNamespace>SubiektConnector</RootNamespace>
     <AssemblyName>SubiektConnector</AssemblyName>
     <LangVersion>latest</LangVersion>
+    <PlatformTarget>x86</PlatformTarget>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
