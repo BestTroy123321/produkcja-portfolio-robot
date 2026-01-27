@@ -343,10 +343,12 @@ ORDER BY d.dok_DataWyst DESC";
                 {
                     var dok = subiekt.Dokumenty.Wczytaj(dokument.DokId);
 
+                    var liczbaPozycji = dok.Pozycje.Liczba;
                     foreach (var pozycja in dokument.Pozycje)
                     {
-                        foreach (var poz in dok.Pozycje)
+                        for (var i = 1; i <= liczbaPozycji; i++)
                         {
+                            var poz = dok.Pozycje.Element(i);
                             if (poz.Towar.Symbol == pozycja.Symbol)
                             {
                                 poz.CenaNettoPrzedRabatem = pozycja.NowaCena;
