@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <appSettings>
+    <add key="N8nUrl" value="https://example.com/webhook/test" />
+  </appSettings>
+  <connectionStrings>
+    <add name="SubiektDB" connectionString="Server=SERVER_NAME;Database=FIRMA_TEST;User Id=USER_NAME;Password=PASSWORD;" />
+  </connectionStrings>
+</configuration>
