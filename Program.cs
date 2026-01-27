@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Configuration;
 using System.Data.SqlClient;
 using System.Net.Http;
 using System.Text;
@@ -46,16 +47,27 @@ namespace SubiektConnector
 
     internal class Program
     {
-        private const string N8N_URL = "https://example.com/webhook/test";
-
         private static void Main(string[] args)
         {
-            var connectionString = "Server=SERVER_NAME;Database=DATABASE_NAME;User Id=USER_NAME;Password=PASSWORD;";
+            var connectionString = ConfigurationManager.ConnectionStrings["SubiektDB"]?.ConnectionString;
+            var n8nUrl = ConfigurationManager.AppSettings["N8nUrl"];
 
             Console.WriteLine("Łączenie z bazą...");
 
             try
             {
+                if (string.IsNullOrWhiteSpace(connectionString))
+                {
+                    Console.WriteLine("Brak connection stringa: SubiektDB");
+                    return;
+                }
+
+                if (string.IsNullOrWhiteSpace(n8nUrl))
+                {
+                    Console.WriteLine("Brak ustawienia appSettings: N8nUrl");
+                    return;
+                }
+
                 var pozycje = new List<PozycjaDoZmiany>();
                 var dokumenty = new Dictionary<int, DokumentPayload>();
 
@@ -109,7 +121,7 @@ namespace SubiektConnector
                 using (var httpClient = new HttpClient())
                 using (var content = new StringContent(payload, Encoding.UTF8, "application/json"))
                 {
-                    var response = httpClient.PostAsync(N8N_URL, content).GetAwaiter().GetResult();
+                    var response = httpClient.PostAsync(n8nUrl, content).GetAwaiter().GetResult();
                     var responseBody = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
 
                     Console.WriteLine("Odpowiedź serwera: " + (int)response.StatusCode + " " + response.ReasonPhrase);
