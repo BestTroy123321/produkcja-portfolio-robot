@@ -8,6 +8,27 @@ using Newtonsoft.Json;
 
 namespace SubiektConnector
 {
+    public class DokumentZmianyDto
+    {
+        [JsonProperty("dok_id")]
+        public int DokId { get; set; }
+
+        [JsonProperty("dok_nr_pelny")]
+        public string DokNrPelny { get; set; }
+
+        [JsonProperty("pozycje")]
+        public List<PozycjaZmianyDto> Pozycje { get; set; }
+    }
+
+    public class PozycjaZmianyDto
+    {
+        [JsonProperty("symbol")]
+        public string Symbol { get; set; }
+
+        [JsonProperty("nowa_cena")]
+        public decimal NowaCena { get; set; }
+    }
+
     public class PozycjaDoZmiany
     {
         public int DokId { get; set; }
@@ -128,6 +149,12 @@ namespace SubiektConnector
                     if (!string.IsNullOrWhiteSpace(responseBody))
                     {
                         Console.WriteLine("Treść odpowiedzi: " + responseBody);
+                        var subiekt = ZalogujSubiektGT();
+                        if (subiekt != null)
+                        {
+                            PrzetworzDokumenty(responseBody, subiekt);
+                            ZakonczSubiekt(subiekt);
+                        }
                     }
                 }
             }
@@ -157,6 +184,141 @@ WHERE
     AND d.dok_DataWyst >= DATEADD(hour, -48, GETDATE()) 
     AND g.grt_Nazwa = 'KONFEKCJA' 
 ORDER BY d.dok_DataWyst DESC";
+        }
+
+        private static dynamic ZalogujSubiektGT()
+        {
+            var sferaServer = ConfigurationManager.AppSettings["SferaServer"];
+            var sferaDatabase = ConfigurationManager.AppSettings["SferaDatabase"];
+            var sferaDbUser = ConfigurationManager.AppSettings["SferaDbUser"];
+            var sferaDbPassword = ConfigurationManager.AppSettings["SferaDbPassword"];
+            var sferaOperator = ConfigurationManager.AppSettings["SferaOperator"];
+            var sferaOperatorPassword = ConfigurationManager.AppSettings["SferaOperatorPassword"];
+            var sferaProdukt = ConfigurationManager.AppSettings["SferaProdukt"];
+            var sferaAutentykacja = ConfigurationManager.AppSettings["SferaAutentykacja"];
+            var sferaUruchomDopasuj = ConfigurationManager.AppSettings["SferaUruchomDopasuj"];
+            var sferaUruchomTryb = ConfigurationManager.AppSettings["SferaUruchomTryb"];
+            var sferaMagazynId = ConfigurationManager.AppSettings["SferaMagazynId"];
+
+            if (string.IsNullOrWhiteSpace(sferaServer) ||
+                string.IsNullOrWhiteSpace(sferaDatabase) ||
+                string.IsNullOrWhiteSpace(sferaOperator))
+            {
+                Console.WriteLine("Brak konfiguracji Sfery w App.config");
+                return null;
+            }
+
+            Console.WriteLine("Logowanie do Sfery...");
+
+            var gtType = Type.GetTypeFromProgID("InsERT.GT");
+            if (gtType == null)
+            {
+                Console.WriteLine("Brak zarejestrowanego COM: InsERT.GT");
+                return null;
+            }
+
+            dynamic gt = Activator.CreateInstance(gtType);
+            gt.Produkt = ParseIntSetting(sferaProdukt, 1);
+            gt.Autentykacja = ParseIntSetting(sferaAutentykacja, 2);
+            gt.Serwer = sferaServer;
+            gt.Baza = sferaDatabase;
+
+            if (!string.IsNullOrWhiteSpace(sferaDbUser))
+            {
+                gt.Uzytkownik = sferaDbUser;
+            }
+
+            if (!string.IsNullOrWhiteSpace(sferaDbPassword))
+            {
+                gt.UzytkownikHaslo = sferaDbPassword;
+            }
+
+            gt.Operator = sferaOperator;
+
+            if (!string.IsNullOrWhiteSpace(sferaOperatorPassword))
+            {
+                var dodatkiType = Type.GetTypeFromProgID("InsERT.Dodatki");
+                if (dodatkiType != null)
+                {
+                    dynamic dodatki = Activator.CreateInstance(dodatkiType);
+                    gt.OperatorHaslo = dodatki.Szyfruj(sferaOperatorPassword);
+                }
+                else
+                {
+                    gt.OperatorHaslo = sferaOperatorPassword;
+                }
+            }
+
+            dynamic subiekt = gt.Uruchom(ParseIntSetting(sferaUruchomDopasuj, 1), ParseIntSetting(sferaUruchomTryb, 1));
+
+            var magazynId = ParseIntSetting(sferaMagazynId, 0);
+            if (magazynId > 0)
+            {
+                subiekt.MagazynId = magazynId;
+            }
+
+            return subiekt;
+        }
+
+        private static void ZakonczSubiekt(dynamic subiekt)
+        {
+            try
+            {
+                subiekt.Zakoncz();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Błąd podczas zamykania Subiekta: " + ex.Message);
+            }
+        }
+
+        private static int ParseIntSetting(string value, int defaultValue)
+        {
+            if (int.TryParse(value, out var result))
+            {
+                return result;
+            }
+
+            return defaultValue;
+        }
+
+        public static void PrzetworzDokumenty(string jsonResponse, dynamic subiekt)
+        {
+            if (subiekt == null)
+            {
+                Console.WriteLine("Brak połączenia z Subiektem GT");
+                return;
+            }
+
+            var dokumenty = JsonConvert.DeserializeObject<List<DokumentZmianyDto>>(jsonResponse) ?? new List<DokumentZmianyDto>();
+
+            foreach (var dokument in dokumenty)
+            {
+                try
+                {
+                    var dok = subiekt.Dokumenty.Wczytaj(dokument.DokId);
+
+                    foreach (var pozycja in dokument.Pozycje)
+                    {
+                        foreach (var poz in dok.Pozycje)
+                        {
+                            if (poz.Towar.Symbol == pozycja.Symbol)
+                            {
+                                poz.CenaNettoPrzedRabatem = pozycja.NowaCena;
+                            }
+                        }
+                    }
+
+                    dok.Zapisz();
+                    dok.Zamknij();
+
+                    Console.WriteLine("Aktualizacja ZD " + dokument.DokNrPelny + " [OK]");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("Aktualizacja ZD " + dokument.DokNrPelny + " [BŁĄD] " + ex.Message);
+                }
+            }
         }
     }
 }
