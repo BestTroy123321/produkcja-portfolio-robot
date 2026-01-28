@@ -288,12 +288,8 @@ ORDER BY d.dok_DataWyst DESC";
                 }
             }
 
-            dynamic subiekt = gt.Uruchom(ParseIntSetting(sferaUruchomDopasuj, 1), ParseIntSetting(sferaUruchomTryb, 1));
-            try
-            {
-                subiekt.Okno.Widoczne = false;
-            }
-            catch { }
+            dynamic subiekt = gt.Uruchom(ParseIntSetting(sferaUruchomDopasuj, 0), ParseIntSetting(sferaUruchomTryb, 2));
+            UkryjOknoSubiekta(subiekt);
 
             var magazynId = ParseIntSetting(sferaMagazynId, 0);
             if (magazynId > 0)
@@ -352,7 +348,7 @@ ORDER BY d.dok_DataWyst DESC";
 
                     try
                     {
-                        subiekt.Okno.Widoczne = false;
+                        UkryjOknoSubiekta(subiekt);
                     }
                     catch { }
 
@@ -513,6 +509,35 @@ ORDER BY d.dok_DataWyst DESC";
         {
             public int Zaktualizowano { get; set; }
             public int Bledy { get; set; }
+        }
+
+        private static void UkryjOknoSubiekta(dynamic subiekt)
+        {
+            try
+            {
+                subiekt.Okno.Widoczne = false;
+            }
+            catch { }
+
+            try
+            {
+                var okno = PobierzWartoscObject(subiekt, "Okno");
+                if (okno != null)
+                {
+                    try
+                    {
+                        okno.GetType().InvokeMember("Ukryj", BindingFlags.InvokeMethod, null, okno, null);
+                    }
+                    catch { }
+
+                    try
+                    {
+                        okno.GetType().InvokeMember("Minimalizuj", BindingFlags.InvokeMethod, null, okno, null);
+                    }
+                    catch { }
+                }
+            }
+            catch { }
         }
     }
 }
