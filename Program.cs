@@ -74,6 +74,7 @@ namespace SubiektConnector
     {
         private static LoggerService _logger;
 
+        [STAThread]
         private static void Main(string[] args)
         {
             _logger = new LoggerService();
@@ -85,13 +86,7 @@ namespace SubiektConnector
                 intervalMinutes = 30;
             }
 
-            var worker = new Thread(() =>
-            {
-                RunLoop(intervalMinutes);
-            });
-            worker.SetApartmentState(ApartmentState.STA);
-            worker.Start();
-            worker.Join();
+            RunLoop(intervalMinutes);
         }
 
         private static void RunLoop(int intervalMinutes)
@@ -126,7 +121,13 @@ namespace SubiektConnector
                 }
                 finally
                 {
-                    _logger.FlushAsync().GetAwaiter().GetResult();
+                    try
+                    {
+                        _logger.FlushAsync().GetAwaiter().GetResult();
+                    }
+                    catch
+                    {
+                    }
                 }
 
                 Thread.Sleep(TimeSpan.FromMinutes(intervalMinutes));
