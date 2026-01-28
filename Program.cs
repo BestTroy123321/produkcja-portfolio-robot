@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Configuration;
 using System.Data.SqlClient;
+using System.Net;
 using System.Net.Http;
 using System.Text;
 using System.Runtime.InteropServices;
@@ -149,11 +150,26 @@ namespace SubiektConnector
                     var responseBody = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
 
                     Console.WriteLine("Odpowiedź serwera: " + (int)response.StatusCode + " " + response.ReasonPhrase);
-                    if (!string.IsNullOrWhiteSpace(responseBody))
+                    if (response.StatusCode != HttpStatusCode.OK)
                     {
-                        Console.WriteLine("Treść odpowiedzi: " + responseBody);
-                        ZrealizujZmianyWSferze(responseBody);
+                        Console.WriteLine("Webhook zwrócił błędny status, kończę działanie.");
+                        return;
                     }
+
+                    if (string.IsNullOrWhiteSpace(responseBody))
+                    {
+                        Console.WriteLine("Webhook nie zwrócił treści, kończę działanie.");
+                        return;
+                    }
+
+                    Console.WriteLine("Treść odpowiedzi: " + responseBody);
+                    if (!CzyPoprawnaOdpowiedzWebhooka(responseBody))
+                    {
+                        Console.WriteLine("Webhook nie zwrócił wymaganych danych, kończę działanie.");
+                        return;
+                    }
+
+                    ZrealizujZmianyWSferze(responseBody);
                 }
             }
             catch (Exception ex)
@@ -248,6 +264,11 @@ ORDER BY d.dok_DataWyst DESC";
             }
 
             dynamic subiekt = gt.Uruchom(ParseIntSetting(sferaUruchomDopasuj, 1), ParseIntSetting(sferaUruchomTryb, 1));
+            try
+            {
+                subiekt.Okno.Widoczne = false;
+            }
+            catch { }
 
             var magazynId = ParseIntSetting(sferaMagazynId, 0);
             if (magazynId > 0)
@@ -420,6 +441,32 @@ ORDER BY d.dok_DataWyst DESC";
             catch
             {
                 return null;
+            }
+        }
+
+        private static bool CzyPoprawnaOdpowiedzWebhooka(string jsonResponse)
+        {
+            try
+            {
+                var dokumenty = JsonConvert.DeserializeObject<List<DokumentZmianyDto>>(jsonResponse);
+                if (dokumenty == null || dokumenty.Count == 0)
+                {
+                    return false;
+                }
+
+                foreach (var dokument in dokumenty)
+                {
+                    if (dokument != null && dokument.DokId > 0 && dokument.Pozycje != null && dokument.Pozycje.Count > 0)
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+            catch
+            {
+                return false;
             }
         }
     }
