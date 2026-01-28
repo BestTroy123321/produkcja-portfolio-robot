@@ -79,126 +79,167 @@ namespace SubiektConnector
             _logger = new LoggerService();
             _logger.AddLog("INFO", "Uruchomienie robota");
 
+            var intervalMinutes = ParseIntSetting(ConfigurationManager.AppSettings["IntervalMinutes"], 30);
+            if (intervalMinutes < 1)
+            {
+                intervalMinutes = 30;
+            }
+
+            var worker = new Thread(() =>
+            {
+                RunLoop(intervalMinutes);
+            });
+            worker.SetApartmentState(ApartmentState.STA);
+            worker.Start();
+            worker.Join();
+        }
+
+        private static void RunLoop(int intervalMinutes)
+        {
+            dynamic subiekt = null;
+
+            while (true)
+            {
+                try
+                {
+                    if (subiekt == null)
+                    {
+                        subiekt = ZalogujSubiektGT();
+                        if (subiekt == null)
+                        {
+                            _logger.AddLog("ERROR", "Logowanie do Sfery nie powiodło się", new { stackTrace = Environment.StackTrace });
+                            _logger.FlushAsync().GetAwaiter().GetResult();
+                            Thread.Sleep(TimeSpan.FromMinutes(intervalMinutes));
+                            continue;
+                        }
+                    }
+
+                    ExecuteOnce(subiekt);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("Błąd: " + ex.Message);
+                    _logger.AddLog("ERROR", ex.Message, new { stackTrace = ex.ToString() });
+                    try { ZakonczSubiekt(subiekt); } catch { }
+                    try { Marshal.ReleaseComObject(subiekt); } catch { }
+                    subiekt = null;
+                }
+                finally
+                {
+                    _logger.FlushAsync().GetAwaiter().GetResult();
+                }
+
+                Thread.Sleep(TimeSpan.FromMinutes(intervalMinutes));
+            }
+        }
+
+        private static void ExecuteOnce(dynamic subiekt)
+        {
             var connectionString = ConfigurationManager.ConnectionStrings["SubiektDB"]?.ConnectionString;
             var n8nUrl = ConfigurationManager.AppSettings["N8nUrl"];
 
             Console.WriteLine("Łączenie z bazą...");
 
-            try
+            _logger.AddLog("INFO", "Rozpoczęto synchronizację");
+
+            if (string.IsNullOrWhiteSpace(connectionString))
             {
-                _logger.AddLog("INFO", "Rozpoczęto synchronizację");
+                Console.WriteLine("Brak connection stringa: SubiektDB");
+                _logger.AddLog("ERROR", "Brak connection stringa: SubiektDB", new { stackTrace = Environment.StackTrace });
+                return;
+            }
 
-                if (string.IsNullOrWhiteSpace(connectionString))
+            if (string.IsNullOrWhiteSpace(n8nUrl))
+            {
+                Console.WriteLine("Brak ustawienia appSettings: N8nUrl");
+                _logger.AddLog("ERROR", "Brak ustawienia appSettings: N8nUrl", new { stackTrace = Environment.StackTrace });
+                return;
+            }
+
+            var pozycje = new List<PozycjaDoZmiany>();
+            var dokumenty = new Dictionary<int, DokumentPayload>();
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(GetSqlQuery(), connection))
+            {
+                connection.Open();
+
+                using (var reader = command.ExecuteReader())
                 {
-                    Console.WriteLine("Brak connection stringa: SubiektDB");
-                    _logger.AddLog("ERROR", "Brak connection stringa: SubiektDB", new { stackTrace = Environment.StackTrace });
-                    return;
-                }
-
-                if (string.IsNullOrWhiteSpace(n8nUrl))
-                {
-                    Console.WriteLine("Brak ustawienia appSettings: N8nUrl");
-                    _logger.AddLog("ERROR", "Brak ustawienia appSettings: N8nUrl", new { stackTrace = Environment.StackTrace });
-                    return;
-                }
-
-                var pozycje = new List<PozycjaDoZmiany>();
-                var dokumenty = new Dictionary<int, DokumentPayload>();
-
-                using (var connection = new SqlConnection(connectionString))
-                using (var command = new SqlCommand(GetSqlQuery(), connection))
-                {
-                    connection.Open();
-
-                    using (var reader = command.ExecuteReader())
+                    while (reader.Read())
                     {
-                        while (reader.Read())
+                        var pozycja = new PozycjaDoZmiany
                         {
-                            var pozycja = new PozycjaDoZmiany
+                            DokId = reader.GetInt32(0),
+                            SymbolTowaru = reader.GetString(1),
+                            StaraCena = reader.GetDecimal(2),
+                            NumerPelny = reader.GetString(3),
+                            NazwaTowaru = reader.GetString(4),
+                            DataWystawienia = reader.GetDateTime(5)
+                        };
+
+                        pozycje.Add(pozycja);
+                        if (!dokumenty.TryGetValue(pozycja.DokId, out var dokument))
+                        {
+                            dokument = new DokumentPayload
                             {
-                                DokId = reader.GetInt32(0),
-                                SymbolTowaru = reader.GetString(1),
-                                StaraCena = reader.GetDecimal(2),
-                                NumerPelny = reader.GetString(3),
-                                NazwaTowaru = reader.GetString(4),
-                                DataWystawienia = reader.GetDateTime(5)
+                                DokId = pozycja.DokId,
+                                DokNrPelny = pozycja.NumerPelny,
+                                DokDataWyst = pozycja.DataWystawienia.ToString("dd.MM.yyyy"),
+                                Pozycje = new List<PozycjaPayload>()
                             };
-
-                            pozycje.Add(pozycja);
-                            if (!dokumenty.TryGetValue(pozycja.DokId, out var dokument))
-                            {
-                                dokument = new DokumentPayload
-                                {
-                                    DokId = pozycja.DokId,
-                                    DokNrPelny = pozycja.NumerPelny,
-                                    DokDataWyst = pozycja.DataWystawienia.ToString("dd.MM.yyyy"),
-                                    Pozycje = new List<PozycjaPayload>()
-                                };
-                                dokumenty.Add(pozycja.DokId, dokument);
-                            }
-
-                            dokument.Pozycje.Add(new PozycjaPayload
-                            {
-                                Symbol = pozycja.SymbolTowaru,
-                                Nazwa = pozycja.NazwaTowaru,
-                                CenaOryginalnaNetto = pozycja.StaraCena
-                            });
+                            dokumenty.Add(pozycja.DokId, dokument);
                         }
-                    }
-                }
 
-                Console.WriteLine("Znaleziono " + dokumenty.Count + " dokumentów.");
-                _logger.AddLog("SUCCESS", "Pobrano listę dokumentów", new { count = dokumenty.Count });
-
-                var payload = JsonConvert.SerializeObject(new List<DokumentPayload>(dokumenty.Values));
-                Console.WriteLine("Wysyłanie do n8n...");
-
-                using (var httpClient = new HttpClient())
-                using (var content = new StringContent(payload, Encoding.UTF8, "application/json"))
-                {
-                    var response = httpClient.PostAsync(n8nUrl, content).GetAwaiter().GetResult();
-                    var responseBody = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
-
-                    Console.WriteLine("Odpowiedź serwera: " + (int)response.StatusCode + " " + response.ReasonPhrase);
-                    if (response.StatusCode != HttpStatusCode.OK)
-                    {
-                        Console.WriteLine("Webhook zwrócił błędny status, kończę działanie.");
-                        _logger.AddLog("ERROR", "Webhook zwrócił błędny status", new { stackTrace = responseBody });
-                        return;
-                    }
-
-                    if (string.IsNullOrWhiteSpace(responseBody))
-                    {
-                        Console.WriteLine("Webhook nie zwrócił treści, kończę działanie.");
-                        _logger.AddLog("ERROR", "Webhook nie zwrócił treści", new { stackTrace = Environment.StackTrace });
-                        return;
-                    }
-
-                    Console.WriteLine("Treść odpowiedzi: " + responseBody);
-                    if (!CzyPoprawnaOdpowiedzWebhooka(responseBody))
-                    {
-                        Console.WriteLine("Webhook nie zwrócił wymaganych danych, kończę działanie.");
-                        _logger.AddLog("ERROR", "Webhook nie zwrócił wymaganych danych", new { stackTrace = responseBody });
-                        return;
-                    }
-
-                    var result = ZrealizujZmianyWSferze(responseBody);
-                    if (result != null)
-                    {
-                        _logger.AddLog("SUCCESS", "Podsumowanie aktualizacji", new { zaktualizowano = result.Zaktualizowano, bledy = result.Bledy });
+                        dokument.Pozycje.Add(new PozycjaPayload
+                        {
+                            Symbol = pozycja.SymbolTowaru,
+                            Nazwa = pozycja.NazwaTowaru,
+                            CenaOryginalnaNetto = pozycja.StaraCena
+                        });
                     }
                 }
             }
-            catch (Exception ex)
+
+            Console.WriteLine("Znaleziono " + dokumenty.Count + " dokumentów.");
+            _logger.AddLog("SUCCESS", "Pobrano listę dokumentów", new { count = dokumenty.Count });
+
+            var payload = JsonConvert.SerializeObject(new List<DokumentPayload>(dokumenty.Values));
+            Console.WriteLine("Wysyłanie do n8n...");
+
+            using (var httpClient = new HttpClient())
+            using (var content = new StringContent(payload, Encoding.UTF8, "application/json"))
             {
-                Console.WriteLine("Błąd: " + ex.Message);
-                _logger.AddLog("ERROR", ex.Message, new { stackTrace = ex.ToString() });
-            }
-            finally
-            {
-                if (_logger != null)
+                var response = httpClient.PostAsync(n8nUrl, content).GetAwaiter().GetResult();
+                var responseBody = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+
+                Console.WriteLine("Odpowiedź serwera: " + (int)response.StatusCode + " " + response.ReasonPhrase);
+                if (response.StatusCode != HttpStatusCode.OK)
                 {
-                    _logger.FlushAsync().GetAwaiter().GetResult();
+                    Console.WriteLine("Webhook zwrócił błędny status, kończę działanie.");
+                    _logger.AddLog("ERROR", "Webhook zwrócił błędny status", new { stackTrace = responseBody });
+                    return;
+                }
+
+                if (string.IsNullOrWhiteSpace(responseBody))
+                {
+                    Console.WriteLine("Webhook nie zwrócił treści, kończę działanie.");
+                    _logger.AddLog("ERROR", "Webhook nie zwrócił treści", new { stackTrace = Environment.StackTrace });
+                    return;
+                }
+
+                Console.WriteLine("Treść odpowiedzi: " + responseBody);
+                if (!CzyPoprawnaOdpowiedzWebhooka(responseBody))
+                {
+                    Console.WriteLine("Webhook nie zwrócił wymaganych danych, kończę działanie.");
+                    _logger.AddLog("ERROR", "Webhook nie zwrócił wymaganych danych", new { stackTrace = responseBody });
+                    return;
+                }
+
+                var result = PrzetworzDokumenty(responseBody, subiekt);
+                if (result != null)
+                {
+                    _logger.AddLog("SUCCESS", "Podsumowanie aktualizacji", new { zaktualizowano = result.Zaktualizowano, bledy = result.Bledy });
                 }
             }
         }
@@ -320,57 +361,6 @@ ORDER BY d.dok_DataWyst DESC";
             }
 
             return defaultValue;
-        }
-
-        private static UpdateResult ZrealizujZmianyWSferze(string jsonResponse)
-        {
-            UpdateResult result = null;
-            OpenComConnection(subiekt =>
-            {
-                result = PrzetworzDokumenty(jsonResponse, subiekt);
-            });
-            return result;
-        }
-
-        private static void OpenComConnection(Action<dynamic> useComObject)
-        {
-            var thread = new Thread(() =>
-            {
-                dynamic subiekt = null;
-                try
-                {
-                    subiekt = ZalogujSubiektGT();
-                    if (subiekt == null)
-                    {
-                        Console.WriteLine("Logowanie do Sfery nie powiodło się");
-                        return;
-                    }
-
-                    try
-                    {
-                        UkryjOknoSubiekta(subiekt);
-                    }
-                    catch { }
-
-                    useComObject(subiekt);
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine("Błąd Sfery: " + ex.Message);
-                    _logger?.AddLog("ERROR", ex.Message, new { stackTrace = ex.ToString() });
-                }
-                finally
-                {
-                    if (subiekt != null)
-                    {
-                        try { ZakonczSubiekt(subiekt); } catch { }
-                        try { Marshal.ReleaseComObject(subiekt); } catch { }
-                    }
-                }
-            });
-            thread.SetApartmentState(ApartmentState.STA);
-            thread.Start();
-            thread.Join();
         }
 
         private static UpdateResult PrzetworzDokumenty(string jsonResponse, dynamic subiekt)
