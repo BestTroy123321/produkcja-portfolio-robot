@@ -30,7 +30,7 @@ namespace SubiektConnector
         public string Symbol { get; set; }
 
         [JsonProperty("nowa_cena")]
-        public decimal NowaCena { get; set; }
+        public decimal? NowaCena { get; set; }
     }
 
     public class PozycjaDoZmiany
@@ -72,8 +72,13 @@ namespace SubiektConnector
 
     internal class Program
     {
+        private static LoggerService _logger;
+
         private static void Main(string[] args)
         {
+            _logger = new LoggerService();
+            _logger.AddLog("INFO", "Uruchomienie robota");
+
             var connectionString = ConfigurationManager.ConnectionStrings["SubiektDB"]?.ConnectionString;
             var n8nUrl = ConfigurationManager.AppSettings["N8nUrl"];
 
@@ -81,15 +86,19 @@ namespace SubiektConnector
 
             try
             {
+                _logger.AddLog("INFO", "Rozpoczęto synchronizację");
+
                 if (string.IsNullOrWhiteSpace(connectionString))
                 {
                     Console.WriteLine("Brak connection stringa: SubiektDB");
+                    _logger.AddLog("ERROR", "Brak connection stringa: SubiektDB", new { stackTrace = Environment.StackTrace });
                     return;
                 }
 
                 if (string.IsNullOrWhiteSpace(n8nUrl))
                 {
                     Console.WriteLine("Brak ustawienia appSettings: N8nUrl");
+                    _logger.AddLog("ERROR", "Brak ustawienia appSettings: N8nUrl", new { stackTrace = Environment.StackTrace });
                     return;
                 }
 
@@ -139,6 +148,7 @@ namespace SubiektConnector
                 }
 
                 Console.WriteLine("Znaleziono " + dokumenty.Count + " dokumentów.");
+                _logger.AddLog("SUCCESS", "Pobrano listę dokumentów", new { count = dokumenty.Count });
 
                 var payload = JsonConvert.SerializeObject(new List<DokumentPayload>(dokumenty.Values));
                 Console.WriteLine("Wysyłanie do n8n...");
@@ -153,12 +163,14 @@ namespace SubiektConnector
                     if (response.StatusCode != HttpStatusCode.OK)
                     {
                         Console.WriteLine("Webhook zwrócił błędny status, kończę działanie.");
+                        _logger.AddLog("ERROR", "Webhook zwrócił błędny status", new { stackTrace = responseBody });
                         return;
                     }
 
                     if (string.IsNullOrWhiteSpace(responseBody))
                     {
                         Console.WriteLine("Webhook nie zwrócił treści, kończę działanie.");
+                        _logger.AddLog("ERROR", "Webhook nie zwrócił treści", new { stackTrace = Environment.StackTrace });
                         return;
                     }
 
@@ -166,15 +178,28 @@ namespace SubiektConnector
                     if (!CzyPoprawnaOdpowiedzWebhooka(responseBody))
                     {
                         Console.WriteLine("Webhook nie zwrócił wymaganych danych, kończę działanie.");
+                        _logger.AddLog("ERROR", "Webhook nie zwrócił wymaganych danych", new { stackTrace = responseBody });
                         return;
                     }
 
-                    ZrealizujZmianyWSferze(responseBody);
+                    var result = ZrealizujZmianyWSferze(responseBody);
+                    if (result != null)
+                    {
+                        _logger.AddLog("SUCCESS", "Podsumowanie aktualizacji", new { zaktualizowano = result.Zaktualizowano, bledy = result.Bledy });
+                    }
                 }
             }
             catch (Exception ex)
             {
                 Console.WriteLine("Błąd: " + ex.Message);
+                _logger.AddLog("ERROR", ex.Message, new { stackTrace = ex.ToString() });
+            }
+            finally
+            {
+                if (_logger != null)
+                {
+                    _logger.FlushAsync().GetAwaiter().GetResult();
+                }
             }
         }
 
@@ -301,12 +326,14 @@ ORDER BY d.dok_DataWyst DESC";
             return defaultValue;
         }
 
-        private static void ZrealizujZmianyWSferze(string jsonResponse)
+        private static UpdateResult ZrealizujZmianyWSferze(string jsonResponse)
         {
+            UpdateResult result = null;
             OpenComConnection(subiekt =>
             {
-                PrzetworzDokumenty(jsonResponse, subiekt);
+                result = PrzetworzDokumenty(jsonResponse, subiekt);
             });
+            return result;
         }
 
         private static void OpenComConnection(Action<dynamic> useComObject)
@@ -334,6 +361,7 @@ ORDER BY d.dok_DataWyst DESC";
                 catch (Exception ex)
                 {
                     Console.WriteLine("Błąd Sfery: " + ex.Message);
+                    _logger?.AddLog("ERROR", ex.Message, new { stackTrace = ex.ToString() });
                 }
                 finally
                 {
@@ -349,15 +377,16 @@ ORDER BY d.dok_DataWyst DESC";
             thread.Join();
         }
 
-        public static void PrzetworzDokumenty(string jsonResponse, dynamic subiekt)
+        private static UpdateResult PrzetworzDokumenty(string jsonResponse, dynamic subiekt)
         {
             if (subiekt == null)
             {
                 Console.WriteLine("Brak połączenia z Subiektem GT");
-                return;
+                return null;
             }
 
             var dokumenty = JsonConvert.DeserializeObject<List<DokumentZmianyDto>>(jsonResponse) ?? new List<DokumentZmianyDto>();
+            var result = new UpdateResult();
 
             foreach (var dokument in dokumenty)
             {
@@ -368,13 +397,18 @@ ORDER BY d.dok_DataWyst DESC";
                     var liczbaPozycji = dok.Pozycje.Liczba;
                     foreach (var pozycja in dokument.Pozycje)
                     {
+                        if (!pozycja.NowaCena.HasValue)
+                        {
+                            continue;
+                        }
+
                         for (var i = 1; i <= liczbaPozycji; i++)
                         {
                             var poz = dok.Pozycje.Element(i);
                             var symbolTowaru = PobierzSymbolPozycji(poz);
                             if (!string.IsNullOrWhiteSpace(symbolTowaru) && symbolTowaru == pozycja.Symbol)
                             {
-                                poz.CenaNettoPrzedRabatem = pozycja.NowaCena;
+                                poz.CenaNettoPrzedRabatem = pozycja.NowaCena.Value;
                             }
                         }
                     }
@@ -383,12 +417,17 @@ ORDER BY d.dok_DataWyst DESC";
                     dok.Zamknij();
 
                     Console.WriteLine("Aktualizacja ZD " + dokument.DokNrPelny + " [OK]");
+                    result.Zaktualizowano++;
                 }
                 catch (Exception ex)
                 {
                     Console.WriteLine("Aktualizacja ZD " + dokument.DokNrPelny + " [BŁĄD] " + ex.Message);
+                    result.Bledy++;
+                    _logger?.AddLog("ERROR", ex.Message, new { stackTrace = ex.ToString() });
                 }
             }
+
+            return result;
         }
 
         private static string PobierzSymbolPozycji(dynamic pozycja)
@@ -468,6 +507,12 @@ ORDER BY d.dok_DataWyst DESC";
             {
                 return false;
             }
+        }
+
+        private class UpdateResult
+        {
+            public int Zaktualizowano { get; set; }
+            public int Bledy { get; set; }
         }
     }
 }
