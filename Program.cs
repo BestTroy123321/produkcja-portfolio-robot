@@ -168,9 +168,10 @@ namespace SubiektConnector
             var connectionString = ConfigurationManager.ConnectionStrings["SubiektDB"]?.ConnectionString;
             var zdWebhookUrl = ConfigurationManager.AppSettings["ZdWebhookUrl"];
 
-            Console.WriteLine("Łączenie z bazą...");
+            Console.WriteLine("Etap 1: Poprawa ZD");
+            _logger.AddLog("INFO", "Etap 1: rozpoczęto poprawę ZD");
 
-            _logger.AddLog("INFO", "Rozpoczęto synchronizację");
+            Console.WriteLine("Łączenie z bazą...");
 
             if (string.IsNullOrWhiteSpace(connectionString))
             {
@@ -273,6 +274,8 @@ namespace SubiektConnector
                 }
             }
 
+            _logger.AddLog("INFO", "Etap 2: rozpoczęto tworzenie RW na podstawie FZ");
+            Console.WriteLine("Etap 2: Tworzenie RW na podstawie FZ");
             ExecuteFzWebhook(connectionString);
         }
 
@@ -329,58 +332,83 @@ ORDER BY d.dok_DataWyst DESC";
             var fzWebhookUrl = ConfigurationManager.AppSettings["FzWebhookUrl"];
             if (string.IsNullOrWhiteSpace(fzWebhookUrl))
             {
+                _logger.AddLog("ERROR", "Brak ustawienia appSettings: FzWebhookUrl", new { stackTrace = Environment.StackTrace });
                 return;
             }
 
             var dokumenty = new Dictionary<int, FzPayload>();
+            var liczbaPozycji = 0;
 
-            using (var connection = new SqlConnection(connectionString))
-            using (var command = new SqlCommand(GetFzSqlQuery(), connection))
+            try
             {
-                connection.Open();
-
-                using (var reader = command.ExecuteReader())
+                using (var connection = new SqlConnection(connectionString))
+                using (var command = new SqlCommand(GetFzSqlQuery(), connection))
                 {
-                    while (reader.Read())
+                    connection.Open();
+
+                    using (var reader = command.ExecuteReader())
                     {
-                        var fzId = reader.GetInt32(0);
-                        var fzNumer = reader.GetString(1);
-                        var symbol = reader.GetString(4);
-                        var ilosc = reader.GetDecimal(5);
-
-                        if (!dokumenty.TryGetValue(fzId, out var dokument))
+                        while (reader.Read())
                         {
-                            dokument = new FzPayload
+                            var fzId = reader.GetInt32(0);
+                            var fzNumer = reader.GetString(1);
+                            var symbol = reader.GetString(4);
+                            var ilosc = reader.GetDecimal(5);
+
+                            if (!dokumenty.TryGetValue(fzId, out var dokument))
                             {
-                                Context = new FzContextPayload
+                                dokument = new FzPayload
                                 {
-                                    FzId = fzId,
-                                    FzNumer = fzNumer
-                                },
-                                Produkty = new List<FzPozycjaPayload>()
-                            };
-                            dokumenty.Add(fzId, dokument);
-                        }
+                                    Context = new FzContextPayload
+                                    {
+                                        FzId = fzId,
+                                        FzNumer = fzNumer
+                                    },
+                                    Produkty = new List<FzPozycjaPayload>()
+                                };
+                                dokumenty.Add(fzId, dokument);
+                            }
 
-                        dokument.Produkty.Add(new FzPozycjaPayload
-                        {
-                            Symbol = symbol,
-                            Ilosc = ilosc
-                        });
+                            dokument.Produkty.Add(new FzPozycjaPayload
+                            {
+                                Symbol = symbol,
+                                Ilosc = ilosc
+                            });
+                            liczbaPozycji++;
+                        }
                     }
                 }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Etap 2: Błąd podczas pobierania FZ: " + ex.Message);
+                _logger.AddLog("ERROR", "Etap 2: błąd pobierania FZ", new { stackTrace = ex.ToString() });
+                return;
             }
 
             if (dokumenty.Count == 0)
             {
+                Console.WriteLine("Etap 2: Brak FZ do przetworzenia.");
+                _logger.AddLog("INFO", "Etap 2: brak FZ do przetworzenia");
                 return;
             }
 
+            Console.WriteLine("Etap 2: Znaleziono " + dokumenty.Count + " FZ z " + liczbaPozycji + " produktami.");
+            _logger.AddLog("SUCCESS", "Etap 2: znaleziono " + dokumenty.Count + " FZ z " + liczbaPozycji + " produktami", new { liczbaFz = dokumenty.Count, liczbaPozycji = liczbaPozycji });
+
             var payload = JsonConvert.SerializeObject(new List<FzPayload>(dokumenty.Values));
-            using (var httpClient = new HttpClient())
-            using (var content = new StringContent(payload, Encoding.UTF8, "application/json"))
+            try
             {
-                httpClient.PostAsync(fzWebhookUrl, content).GetAwaiter().GetResult();
+                using (var httpClient = new HttpClient())
+                using (var content = new StringContent(payload, Encoding.UTF8, "application/json"))
+                {
+                    httpClient.PostAsync(fzWebhookUrl, content).GetAwaiter().GetResult();
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Etap 2: Błąd podczas wysyłki webhooka: " + ex.Message);
+                _logger.AddLog("ERROR", "Etap 2: błąd wysyłki webhooka", new { stackTrace = ex.ToString() });
             }
         }
 
