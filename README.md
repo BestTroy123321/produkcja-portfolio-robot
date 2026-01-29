@@ -11,7 +11,7 @@
 1. Sklonuj repozytorium.
 2. Skopiuj `App.config.template` do `App.config`.
 3. Uzupełnij `App.config`:
-   - `N8nUrl`
+   - `ZdWebhookUrl`
    - `SubiektDB`
 4. Pobierz paczki NuGet:
    ```powershell

@@ -70,6 +70,33 @@ namespace SubiektConnector
         public decimal CenaOryginalnaNetto { get; set; }
     }
 
+    public class FzPozycjaPayload
+    {
+        [JsonProperty("symbol")]
+        public string Symbol { get; set; }
+
+        [JsonProperty("ilosc")]
+        public decimal Ilosc { get; set; }
+    }
+
+    public class FzContextPayload
+    {
+        [JsonProperty("fz_id")]
+        public int FzId { get; set; }
+
+        [JsonProperty("fz_numer")]
+        public string FzNumer { get; set; }
+    }
+
+    public class FzPayload
+    {
+        [JsonProperty("context")]
+        public FzContextPayload Context { get; set; }
+
+        [JsonProperty("produkty")]
+        public List<FzPozycjaPayload> Produkty { get; set; }
+    }
+
     internal class Program
     {
         private static LoggerService _logger;
@@ -139,7 +166,7 @@ namespace SubiektConnector
         private static void ExecuteOnce(dynamic subiekt)
         {
             var connectionString = ConfigurationManager.ConnectionStrings["SubiektDB"]?.ConnectionString;
-            var n8nUrl = ConfigurationManager.AppSettings["N8nUrl"];
+            var zdWebhookUrl = ConfigurationManager.AppSettings["ZdWebhookUrl"];
 
             Console.WriteLine("Łączenie z bazą...");
 
@@ -152,10 +179,10 @@ namespace SubiektConnector
                 return;
             }
 
-            if (string.IsNullOrWhiteSpace(n8nUrl))
+            if (string.IsNullOrWhiteSpace(zdWebhookUrl))
             {
-                Console.WriteLine("Brak ustawienia appSettings: N8nUrl");
-                _logger.AddLog("ERROR", "Brak ustawienia appSettings: N8nUrl", new { stackTrace = Environment.StackTrace });
+                Console.WriteLine("Brak ustawienia appSettings: ZdWebhookUrl");
+                _logger.AddLog("ERROR", "Brak ustawienia appSettings: ZdWebhookUrl", new { stackTrace = Environment.StackTrace });
                 return;
             }
 
@@ -213,7 +240,7 @@ namespace SubiektConnector
             using (var httpClient = new HttpClient())
             using (var content = new StringContent(payload, Encoding.UTF8, "application/json"))
             {
-                var response = httpClient.PostAsync(n8nUrl, content).GetAwaiter().GetResult();
+                var response = httpClient.PostAsync(zdWebhookUrl, content).GetAwaiter().GetResult();
                 var responseBody = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
 
                 Console.WriteLine("Odpowiedź serwera: " + (int)response.StatusCode + " " + response.ReasonPhrase);
@@ -245,6 +272,8 @@ namespace SubiektConnector
                     _logger.AddLog("SUCCESS", "Podsumowanie aktualizacji", new { zaktualizowano = result.Zaktualizowano, bledy = result.Bledy });
                 }
             }
+
+            ExecuteFzWebhook(connectionString);
         }
 
         private static string GetSqlQuery()
@@ -267,6 +296,92 @@ WHERE
     AND d.dok_DataWyst >= DATEADD(hour, -168, GETDATE()) 
     AND g.grt_Nazwa = 'KONFEKCJA' 
 ORDER BY d.dok_DataWyst DESC";
+        }
+
+        private static string GetFzSqlQuery()
+        {
+            return @"
+SELECT 
+    d.dok_Id, 
+    d.dok_NrPelny AS Numer_FZ, 
+    d.dok_DataWyst, 
+    t.tw_Nazwa, 
+    t.tw_Symbol, 
+    p.ob_Ilosc 
+FROM dok__Dokument d 
+JOIN dok_Pozycja p ON d.dok_Id = p.ob_DokHanId 
+JOIN tw__Towar t ON p.ob_TowId = t.tw_Id 
+WHERE 
+    d.dok_Typ = 1
+    AND t.tw_IdGrupa = 263
+    AND d.dok_DataWyst >= DATEADD(day, -3, GETDATE())
+    AND NOT EXISTS ( 
+        SELECT 1 
+        FROM dok__Dokument rw 
+        WHERE rw.dok_Typ = 13 
+        AND rw.dok_Uwagi LIKE '%AUTO-RW: ' + d.dok_NrPelny + '%' 
+    ) 
+ORDER BY d.dok_DataWyst DESC";
+        }
+
+        private static void ExecuteFzWebhook(string connectionString)
+        {
+            var fzWebhookUrl = ConfigurationManager.AppSettings["FzWebhookUrl"];
+            if (string.IsNullOrWhiteSpace(fzWebhookUrl))
+            {
+                return;
+            }
+
+            var dokumenty = new Dictionary<int, FzPayload>();
+
+            using (var connection = new SqlConnection(connectionString))
+            using (var command = new SqlCommand(GetFzSqlQuery(), connection))
+            {
+                connection.Open();
+
+                using (var reader = command.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        var fzId = reader.GetInt32(0);
+                        var fzNumer = reader.GetString(1);
+                        var symbol = reader.GetString(4);
+                        var ilosc = reader.GetDecimal(5);
+
+                        if (!dokumenty.TryGetValue(fzId, out var dokument))
+                        {
+                            dokument = new FzPayload
+                            {
+                                Context = new FzContextPayload
+                                {
+                                    FzId = fzId,
+                                    FzNumer = fzNumer
+                                },
+                                Produkty = new List<FzPozycjaPayload>()
+                            };
+                            dokumenty.Add(fzId, dokument);
+                        }
+
+                        dokument.Produkty.Add(new FzPozycjaPayload
+                        {
+                            Symbol = symbol,
+                            Ilosc = ilosc
+                        });
+                    }
+                }
+            }
+
+            if (dokumenty.Count == 0)
+            {
+                return;
+            }
+
+            var payload = JsonConvert.SerializeObject(new List<FzPayload>(dokumenty.Values));
+            using (var httpClient = new HttpClient())
+            using (var content = new StringContent(payload, Encoding.UTF8, "application/json"))
+            {
+                httpClient.PostAsync(fzWebhookUrl, content).GetAwaiter().GetResult();
+            }
         }
 
         private static dynamic ZalogujSubiektGT()
