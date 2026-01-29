@@ -510,6 +510,7 @@ ORDER BY d.dok_DataWyst DESC";
                     if (odpowiedz == null || !string.Equals(odpowiedz.Status, "success", StringComparison.OrdinalIgnoreCase))
                     {
                         bledy++;
+                        Console.WriteLine("Etap 2: Status różny od success dla FZ " + (odpowiedz?.Context?.FzNumer ?? "brak numeru"));
                         _logger.AddLog("ERROR", "Etap 2: webhook zwrócił status inny niż success", new { fzId = odpowiedz?.Context?.FzId, fzNumer = odpowiedz?.Context?.FzNumer });
                         continue;
                     }
@@ -517,6 +518,7 @@ ORDER BY d.dok_DataWyst DESC";
                     if (odpowiedz.DaneDoRw == null || odpowiedz.DaneDoRw.Pozycje == null || odpowiedz.DaneDoRw.Pozycje.Count == 0)
                     {
                         bledy++;
+                        Console.WriteLine("Etap 2: Brak pozycji do RW dla FZ " + odpowiedz.Context?.FzNumer);
                         _logger.AddLog("ERROR", "Etap 2: brak pozycji do RW", new { fzId = odpowiedz.Context?.FzId, fzNumer = odpowiedz.Context?.FzNumer });
                         continue;
                     }
@@ -533,6 +535,7 @@ ORDER BY d.dok_DataWyst DESC";
                         if (towar == null)
                         {
                             bledy++;
+                            Console.WriteLine("Etap 2: Nie znaleziono towaru " + pozycja.SymbolSurowca + " dla FZ " + odpowiedz.Context?.FzNumer);
                             _logger.AddLog("ERROR", "Etap 2: nie znaleziono towaru", new { symbol = pozycja.SymbolSurowca, fzId = odpowiedz.Context?.FzId, fzNumer = odpowiedz.Context?.FzNumer });
                             continue;
                         }
@@ -548,6 +551,7 @@ ORDER BY d.dok_DataWyst DESC";
                 catch (Exception ex)
                 {
                     bledy++;
+                    Console.WriteLine("Etap 2: Błąd tworzenia RW dla FZ " + odpowiedz?.Context?.FzNumer + ": " + ex.Message);
                     _logger.AddLog("ERROR", "Etap 2: błąd tworzenia RW", new { stackTrace = ex.ToString() });
                 }
             }
