@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Configuration;
 using System.Data.SqlClient;
-using System.Globalization;
 using System.Net;
 using System.Net.Http;
 using System.Text;
@@ -98,48 +97,6 @@ namespace SubiektConnector
         public List<FzPozycjaPayload> Produkty { get; set; }
     }
 
-    public class FzWebhookResponseDto
-    {
-        [JsonProperty("status")]
-        public string Status { get; set; }
-
-        [JsonProperty("context")]
-        public FzWebhookContextDto Context { get; set; }
-
-        [JsonProperty("dane_do_rw")]
-        public FzDaneDoRwDto DaneDoRw { get; set; }
-    }
-
-    public class FzWebhookContextDto
-    {
-        [JsonProperty("fz_id")]
-        public int FzId { get; set; }
-
-        [JsonProperty("fz_numer")]
-        public string FzNumer { get; set; }
-    }
-
-    public class FzDaneDoRwDto
-    {
-        [JsonProperty("opis")]
-        public string Opis { get; set; }
-
-        [JsonProperty("pozycje")]
-        public List<FzRwPozycjaDto> Pozycje { get; set; }
-    }
-
-    public class FzRwPozycjaDto
-    {
-        [JsonProperty("symbol_surowca")]
-        public string SymbolSurowca { get; set; }
-
-        [JsonProperty("ilosc_laczna")]
-        public string IloscLaczna { get; set; }
-
-        [JsonProperty("jednostka")]
-        public string Jednostka { get; set; }
-    }
-
     internal class Program
     {
         private static LoggerService _logger;
@@ -231,7 +188,7 @@ namespace SubiektConnector
                 Console.WriteLine("Etap 1: Pominięto poprawę ZD, przechodzę do etapu 2.");
                 _logger.AddLog("INFO", "Etap 2: rozpoczęto tworzenie RW na podstawie FZ");
                 Console.WriteLine("Etap 2: Tworzenie RW na podstawie FZ");
-                ExecuteFzWebhook(connectionString, subiekt);
+                ExecuteFzWebhook(connectionString);
                 return;
             }
 
@@ -324,7 +281,7 @@ namespace SubiektConnector
 
             _logger.AddLog("INFO", "Etap 2: rozpoczęto tworzenie RW na podstawie FZ");
             Console.WriteLine("Etap 2: Tworzenie RW na podstawie FZ");
-            ExecuteFzWebhook(connectionString, subiekt);
+            ExecuteFzWebhook(connectionString);
         }
 
         private static string GetSqlQuery()
@@ -375,7 +332,7 @@ WHERE
 ORDER BY d.dok_DataWyst DESC";
         }
 
-        private static void ExecuteFzWebhook(string connectionString, dynamic subiekt)
+        private static void ExecuteFzWebhook(string connectionString)
         {
             var fzWebhookUrl = ConfigurationManager.AppSettings["FzWebhookUrl"];
             if (string.IsNullOrWhiteSpace(fzWebhookUrl))
@@ -445,476 +402,19 @@ ORDER BY d.dok_DataWyst DESC";
             _logger.AddLog("SUCCESS", "Etap 2: znaleziono " + dokumenty.Count + " FZ z " + liczbaPozycji + " produktami", new { liczbaFz = dokumenty.Count, liczbaPozycji = liczbaPozycji });
 
             var payload = JsonConvert.SerializeObject(new List<FzPayload>(dokumenty.Values));
-            string responseBody = null;
             try
             {
                 using (var httpClient = new HttpClient())
                 using (var content = new StringContent(payload, Encoding.UTF8, "application/json"))
                 {
-                    var response = httpClient.PostAsync(fzWebhookUrl, content).GetAwaiter().GetResult();
-                    responseBody = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
-                    if (response.StatusCode != HttpStatusCode.OK)
-                    {
-                        Console.WriteLine("Etap 2: Webhook zwrócił błędny status.");
-                        _logger.AddLog("ERROR", "Etap 2: webhook zwrócił błędny status", new { stackTrace = responseBody });
-                        return;
-                    }
+                    httpClient.PostAsync(fzWebhookUrl, content).GetAwaiter().GetResult();
                 }
             }
             catch (Exception ex)
             {
                 Console.WriteLine("Etap 2: Błąd podczas wysyłki webhooka: " + ex.Message);
                 _logger.AddLog("ERROR", "Etap 2: błąd wysyłki webhooka", new { stackTrace = ex.ToString() });
-                return;
             }
-
-            _logger.AddLog("INFO", "Etap 2: rozpoczęto tworzenie RW z odpowiedzi webhooka");
-            Console.WriteLine("Etap 2: Tworzenie RW z odpowiedzi webhooka");
-            PrzetworzRwZWebhooka(responseBody, subiekt);
-        }
-
-        private static void PrzetworzRwZWebhooka(string responseBody, dynamic subiekt)
-        {
-            if (string.IsNullOrWhiteSpace(responseBody))
-            {
-                Console.WriteLine("Etap 2: Webhook nie zwrócił treści, pomijam RW.");
-                _logger.AddLog("INFO", "Etap 2: webhook nie zwrócił treści, pominięto RW");
-                return;
-            }
-
-            List<FzWebhookResponseDto> odpowiedzi;
-            try
-            {
-                odpowiedzi = JsonConvert.DeserializeObject<List<FzWebhookResponseDto>>(responseBody) ?? new List<FzWebhookResponseDto>();
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine("Etap 2: Nie udało się zdeserializować odpowiedzi webhooka.");
-                _logger.AddLog("ERROR", "Etap 2: błąd deserializacji odpowiedzi webhooka", new { stackTrace = ex.ToString() });
-                return;
-            }
-
-            if (odpowiedzi.Count == 0)
-            {
-                Console.WriteLine("Etap 2: Brak danych do RW.");
-                _logger.AddLog("INFO", "Etap 2: brak danych do RW");
-                return;
-            }
-
-            var utworzono = 0;
-            var bledy = 0;
-
-            foreach (var odpowiedz in odpowiedzi)
-            {
-                try
-                {
-                    Console.WriteLine("Etap 2: Start RW dla FZ " + odpowiedz?.Context?.FzNumer);
-                    _logger.AddLog("INFO", "Etap 2: start RW", new { fzId = odpowiedz?.Context?.FzId, fzNumer = odpowiedz?.Context?.FzNumer });
-                    if (odpowiedz == null || !string.Equals(odpowiedz.Status, "success", StringComparison.OrdinalIgnoreCase))
-                    {
-                        bledy++;
-                        Console.WriteLine("Etap 2: Status różny od success dla FZ " + (odpowiedz?.Context?.FzNumer ?? "brak numeru"));
-                        _logger.AddLog("ERROR", "Etap 2: webhook zwrócił status inny niż success", new { fzId = odpowiedz?.Context?.FzId, fzNumer = odpowiedz?.Context?.FzNumer });
-                        continue;
-                    }
-
-                    if (odpowiedz.DaneDoRw == null || odpowiedz.DaneDoRw.Pozycje == null || odpowiedz.DaneDoRw.Pozycje.Count == 0)
-                    {
-                        bledy++;
-                        Console.WriteLine("Etap 2: Brak pozycji do RW dla FZ " + odpowiedz.Context?.FzNumer);
-                        _logger.AddLog("ERROR", "Etap 2: brak pozycji do RW", new { fzId = odpowiedz.Context?.FzId, fzNumer = odpowiedz.Context?.FzNumer });
-                        continue;
-                    }
-
-                    var magId = PobierzWartoscInt(subiekt, "MagazynId");
-                    Console.WriteLine("Etap 2: Aktywny MagazynId w Subiekcie: " + magId);
-                    
-                    if (magId <= 0)
-                    {
-                         // Proba pobrania z konfiguracji jesli w subiekcie 0
-                         var cfgMagIdStr = ConfigurationManager.AppSettings["SferaMagazynId"];
-                         var cfgMagId = ParseIntSetting(cfgMagIdStr, 0);
-                         if (cfgMagId > 0)
-                         {
-                             try 
-                             {
-                                 subiekt.MagazynId = cfgMagId;
-                                 magId = cfgMagId;
-                                 Console.WriteLine("Etap 2: Ustawiono MagazynId z konfiguracji: " + magId);
-                             }
-                             catch (Exception ex)
-                             {
-                                 Console.WriteLine("Etap 2: Błąd ustawiania MagazynId z konfiguracji: " + ex.Message);
-                             }
-                         }
-                         else
-                         {
-                             Console.WriteLine("Etap 2: OSTRZEŻENIE - MagazynId wynosi 0. Zapis może się nie udać.");
-                             _logger.AddLog("WARNING", "Etap 2: MagazynId wynosi 0", new { fzNumer = odpowiedz.Context?.FzNumer });
-                         }
-                    }
-                    else
-                    {
-                        // Upewnij sie ze jest ustawiony
-                        try
-                        {
-                            subiekt.MagazynId = magId;
-                        }
-                        catch { }
-                    }
-
-                    dynamic rw = null;
-                    try
-                    {
-                        rw = subiekt.Dokumenty.Dodaj(13);
-                        Console.WriteLine("Etap 2: Utworzono obiekt RW dla FZ " + odpowiedz.Context?.FzNumer);
-                        _logger.AddLog("INFO", "Etap 2: utworzono obiekt RW", new { fzId = odpowiedz.Context?.FzId, fzNumer = odpowiedz.Context?.FzNumer });
-                    }
-                    catch (Exception ex)
-                    {
-                        bledy++;
-                        Console.WriteLine("Etap 2: Błąd przy tworzeniu obiektu RW (Dokumenty.Dodaj): " + ex.Message);
-                        _logger.AddLog("ERROR", "Etap 2: błąd Dokumenty.Dodaj", new { stackTrace = ex.ToString() });
-                        continue;
-                    }
-
-                    if (!string.IsNullOrWhiteSpace(odpowiedz.DaneDoRw.Opis))
-                    {
-                        try
-                        {
-                            rw.Uwagi = odpowiedz.DaneDoRw.Opis;
-                            Console.WriteLine("Etap 2: Ustawiono uwagi RW dla FZ " + odpowiedz.Context?.FzNumer);
-                        }
-                        catch (Exception ex)
-                        {
-                             Console.WriteLine("Etap 2: Ostrzeżenie - nie udało się ustawić uwag: " + ex.Message);
-                        }
-                    }
-
-                    UstawDateDlaRw(rw, DateTime.Now, odpowiedz.Context?.FzNumer);
-                    // Magazyn jest juz ustawiony w kontekscie Subiekta, ale sprobujmy tez na dokumencie jesli sie rozni
-                    UstawMagazynDlaRw(rw, subiekt, odpowiedz.Context?.FzNumer);
-
-                    var dodanePozycje = 0;
-                    foreach (var pozycja in odpowiedz.DaneDoRw.Pozycje)
-                    {
-                        if (!TryParseIlosc(pozycja.IloscLaczna, out var ilosc))
-                        {
-                            bledy++;
-                            Console.WriteLine("Etap 2: Niepoprawna ilość dla FZ " + odpowiedz.Context?.FzNumer + ", symbol: " + pozycja.SymbolSurowca);
-                            _logger.AddLog("ERROR", "Etap 2: niepoprawna ilość", new { symbol = pozycja.SymbolSurowca });
-                            continue;
-                        }
-
-                        if (ilosc <= 0)
-                        {
-                            Console.WriteLine("Etap 2: Pominięto pozycję z ilością <= 0 dla FZ " + odpowiedz.Context?.FzNumer);
-                            continue;
-                        }
-
-                        var towar = PobierzTowarPoSymbolu(subiekt, pozycja.SymbolSurowca);
-                        if (towar == null)
-                        {
-                            bledy++;
-                            Console.WriteLine("Etap 2: Nie znaleziono towaru " + pozycja.SymbolSurowca);
-                            _logger.AddLog("ERROR", "Etap 2: nie znaleziono towaru", new { symbol = pozycja.SymbolSurowca });
-                            continue;
-                        }
-
-                        var towarId = PobierzWartoscInt(towar, "Id");
-                        if (towarId <= 0)
-                        {
-                            bledy++;
-                            Console.WriteLine("Etap 2: Nie udało się ustalić Id towaru " + pozycja.SymbolSurowca);
-                            continue;
-                        }
-
-                        try
-                        {
-                            dynamic poz = rw.Pozycje.Dodaj(towarId);
-                            UstawIloscPozycji(poz, ilosc, pozycja.SymbolSurowca, odpowiedz.Context?.FzNumer);
-                            
-                            if (magId > 0)
-                            {
-                                UstawMagazynDlaPozycji(poz, magId, pozycja.SymbolSurowca, odpowiedz.Context?.FzNumer);
-                            }
-                            
-                            if (!string.IsNullOrWhiteSpace(pozycja.Jednostka))
-                            {
-                                UstawJednostkePozycji(poz, pozycja.Jednostka, pozycja.SymbolSurowca, odpowiedz.Context?.FzNumer);
-                            }
-
-                            dodanePozycje++;
-                            Console.WriteLine("Etap 2: Dodano pozycję RW dla FZ " + odpowiedz.Context?.FzNumer + ", symbol: " + pozycja.SymbolSurowca + ", ilość: " + ilosc);
-                            _logger.AddLog("INFO", "Etap 2: dodano pozycję RW", new { symbol = pozycja.SymbolSurowca, ilosc = ilosc });
-                        }
-                        catch (Exception ex)
-                        {
-                            bledy++;
-                            Console.WriteLine("Etap 2: Błąd dodawania pozycji " + pozycja.SymbolSurowca + ": " + ex.Message);
-                            _logger.AddLog("ERROR", "Etap 2: błąd dodawania pozycji", new { symbol = pozycja.SymbolSurowca, stackTrace = ex.ToString() });
-                        }
-                    }
-
-                    if (dodanePozycje == 0)
-                    {
-                        bledy++;
-                        Console.WriteLine("Etap 2: RW bez pozycji dla FZ " + odpowiedz.Context?.FzNumer + ", pomijam zapis.");
-                        try { rw.Zamknij(); } catch { }
-                        continue;
-                    }
-
-                    try
-                    {
-                        Console.WriteLine("Etap 2: Zapisuję RW dla FZ " + odpowiedz.Context?.FzNumer);
-                        rw.Zapisz();
-                        Console.WriteLine("Etap 2: RW zapisane poprawnie dla FZ " + odpowiedz.Context?.FzNumer);
-                        _logger.AddLog("SUCCESS", "Etap 2: RW zapisane poprawnie", new { fzId = odpowiedz.Context?.FzId, fzNumer = odpowiedz.Context?.FzNumer });
-                    }
-                    catch (Exception ex)
-                    {
-                        bledy++;
-                        Console.WriteLine("Etap 2: Błąd zapisu RW dla FZ " + odpowiedz.Context?.FzNumer + ": " + ex.Message);
-                        _logger.AddLog("ERROR", "Etap 2: błąd zapisu RW", new { fzId = odpowiedz.Context?.FzId, fzNumer = odpowiedz.Context?.FzNumer, stackTrace = ex.ToString() });
-                    }
-                    finally
-                    {
-                        try { rw.Zamknij(); } catch { }
-                    }
-                    utworzono++;
-                }
-                catch (Exception ex)
-                {
-                    bledy++;
-                    Console.WriteLine("Etap 2: Krytyczny błąd pętli RW dla FZ " + odpowiedz?.Context?.FzNumer + ": " + ex.Message);
-                    _logger.AddLog("ERROR", "Etap 2: krytyczny błąd pętli RW", new { stackTrace = ex.ToString() });
-                }
-            }
-
-            _logger.AddLog("SUCCESS", "Etap 2: utworzono RW", new { utworzono = utworzono, bledy = bledy });
-            Console.WriteLine("Etap 2: Utworzono RW: " + utworzono + ", błędy: " + bledy);
-        }
-
-        private static bool TryParseIlosc(string rawValue, out decimal ilosc)
-        {
-            ilosc = 0m;
-            if (string.IsNullOrWhiteSpace(rawValue))
-            {
-                return false;
-            }
-
-            var trimmed = rawValue.Trim();
-            if (decimal.TryParse(trimmed, NumberStyles.Number, CultureInfo.InvariantCulture, out ilosc))
-            {
-                ilosc = Math.Round(ilosc, 4);
-                return true;
-            }
-
-            var plCulture = new CultureInfo("pl-PL");
-            if (decimal.TryParse(trimmed, NumberStyles.Number, plCulture, out ilosc))
-            {
-                ilosc = Math.Round(ilosc, 4);
-                return true;
-            }
-
-            return false;
-        }
-
-        private static dynamic PobierzTowarPoSymbolu(dynamic subiekt, string symbol)
-        {
-            if (string.IsNullOrWhiteSpace(symbol))
-            {
-                return null;
-            }
-
-            var normalized = symbol.Trim();
-            try
-            {
-                var towar = subiekt.Towary.GetType().InvokeMember("Wczytaj", BindingFlags.InvokeMethod, null, subiekt.Towary, new object[] { normalized });
-                if (towar != null)
-                {
-                    return towar;
-                }
-            }
-            catch
-            {
-            }
-
-            try
-            {
-                var lista = subiekt.Towary.Wyszukaj(normalized);
-                if (lista != null)
-                {
-                    try
-                    {
-                        var liczba = (int)lista.Liczba;
-                        for (var i = 1; i <= liczba; i++)
-                        {
-                            var element = lista.Element(i);
-                            var symbolTowaru = PobierzWartoscString(element, "Symbol");
-                            if (!string.IsNullOrWhiteSpace(symbolTowaru) && string.Equals(symbolTowaru.Trim(), normalized, StringComparison.OrdinalIgnoreCase))
-                            {
-                                var towarId = PobierzWartoscInt(element, "Id");
-                                if (towarId > 0)
-                                {
-                                    try
-                                    {
-                                        return subiekt.Towary.GetType().InvokeMember("Wczytaj", BindingFlags.InvokeMethod, null, subiekt.Towary, new object[] { towarId });
-                                    }
-                                    catch
-                                    {
-                                        return element;
-                                    }
-                                }
-
-                                return element;
-                            }
-                        }
-                    }
-                    catch
-                    {
-                    }
-                }
-            }
-            catch
-            {
-            }
-
-            return null;
-        }
-
-        private static void UstawIloscPozycji(dynamic pozycja, decimal ilosc, string symbol, string fzNumer)
-        {
-            // Konwersja na double dla COM
-            double iloscDouble = (double)ilosc;
-
-            if (TrySetProperty(pozycja, "IloscJm", iloscDouble))
-            {
-                return;
-            }
-
-            if (TrySetProperty(pozycja, "Ilosc", iloscDouble))
-            {
-                return;
-            }
-
-            Console.WriteLine("Etap 2: Nie udało się ustawić ilości dla pozycji " + symbol + " w FZ " + fzNumer);
-            _logger.AddLog("ERROR", "Etap 2: błąd ustawienia ilości pozycji", new { symbol = symbol, fzNumer = fzNumer });
-        }
-
-        private static void UstawDateDlaRw(dynamic rw, DateTime data, string fzNumer)
-        {
-            if (TrySetProperty(rw, "DataWystawienia", data))
-            {
-                return;
-            }
-
-            if (TrySetProperty(rw, "Data", data))
-            {
-                return;
-            }
-
-            if (TrySetProperty(rw, "DataDokumentu", data))
-            {
-                return;
-            }
-
-            Console.WriteLine("Etap 2: Nie udało się ustawić daty RW dla FZ " + fzNumer);
-            _logger.AddLog("ERROR", "Etap 2: błąd ustawienia daty RW", new { fzNumer = fzNumer });
-        }
-
-        private static int UstawMagazynDlaRw(dynamic rw, dynamic subiekt, string fzNumer)
-        {
-            try
-            {
-                var magId = PobierzWartoscInt(subiekt, "MagazynId");
-                if (magId > 0 && TrySetProperty(rw, "MagazynId", magId))
-                {
-                    Console.WriteLine("Etap 2: Ustawiono MagazynId=" + magId + " dla FZ " + fzNumer);
-                    _logger.AddLog("INFO", "Etap 2: ustawiono MagazynId", new { magazynId = magId, fzNumer = fzNumer });
-                    return magId;
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine("Etap 2: Nie udało się ustawić MagazynId dla FZ " + fzNumer + ": " + ex.Message);
-                _logger.AddLog("ERROR", "Etap 2: błąd ustawienia MagazynId", new { fzNumer = fzNumer, stackTrace = ex.ToString() });
-            }
-
-            return 0;
-        }
-
-        private static void UstawMagazynDlaPozycji(dynamic pozycja, int magId, string symbol, string fzNumer)
-        {
-            if (TrySetProperty(pozycja, "MagazynId", magId))
-            {
-                return;
-            }
-
-            Console.WriteLine("Etap 2: Nie udało się ustawić MagazynId pozycji " + symbol + " dla FZ " + fzNumer);
-            _logger.AddLog("ERROR", "Etap 2: błąd ustawienia MagazynId pozycji", new { symbol = symbol, fzNumer = fzNumer, magazynId = magId });
-        }
-
-        private static void UstawJednostkePozycji(dynamic pozycja, string jednostka, string symbol, string fzNumer)
-        {
-            if (TrySetProperty(pozycja, "Jednostka", jednostka))
-            {
-                return;
-            }
-
-            if (TrySetProperty(pozycja, "JednMiary", jednostka))
-            {
-                return;
-            }
-
-            if (TrySetProperty(pozycja, "JednostkaMiary", jednostka))
-            {
-                return;
-            }
-
-            Console.WriteLine("Etap 2: Nie udało się ustawić jednostki dla pozycji " + symbol + " w FZ " + fzNumer);
-            _logger.AddLog("ERROR", "Etap 2: błąd ustawienia jednostki pozycji", new { symbol = symbol, fzNumer = fzNumer, jednostka = jednostka });
-        }
-
-        private static bool TrySetProperty(dynamic obiekt, string nazwa, object wartosc)
-        {
-            try
-            {
-                obiekt.GetType().InvokeMember(nazwa, BindingFlags.SetProperty, null, obiekt, new[] { wartosc });
-                return true;
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
-        private static int PobierzWartoscInt(dynamic obiekt, string nazwa)
-        {
-            try
-            {
-                var value = obiekt.GetType().InvokeMember(nazwa, BindingFlags.GetProperty, null, obiekt, null);
-                if (value == null)
-                {
-                    return 0;
-                }
-
-                if (value is int intValue)
-                {
-                    return intValue;
-                }
-
-                int parsed;
-                if (int.TryParse(value.ToString(), out parsed))
-                {
-                    return parsed;
-                }
-            }
-            catch
-            {
-            }
-
-            return 0;
         }
 
         private static dynamic ZalogujSubiektGT()
