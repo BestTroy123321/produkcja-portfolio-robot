@@ -564,8 +564,17 @@ ORDER BY d.dok_DataWyst DESC";
                             continue;
                         }
 
-                        dynamic poz = rw.Pozycje.Dodaj(towar);
-                        poz.Ilosc = ilosc;
+                        var towarId = PobierzWartoscInt(towar, "Id");
+                        if (towarId <= 0)
+                        {
+                            bledy++;
+                            Console.WriteLine("Etap 2: Nie udało się ustalić Id towaru " + pozycja.SymbolSurowca + " dla FZ " + odpowiedz.Context?.FzNumer);
+                            _logger.AddLog("ERROR", "Etap 2: brak Id towaru", new { symbol = pozycja.SymbolSurowca, fzId = odpowiedz.Context?.FzId, fzNumer = odpowiedz.Context?.FzNumer });
+                            continue;
+                        }
+
+                        dynamic poz = rw.Pozycje.Dodaj(towarId);
+                        UstawIloscPozycji(poz, ilosc, pozycja.SymbolSurowca, odpowiedz.Context?.FzNumer);
                         dodanePozycje++;
                         Console.WriteLine("Etap 2: Dodano pozycję RW dla FZ " + odpowiedz.Context?.FzNumer + ", symbol: " + pozycja.SymbolSurowca + ", ilość: " + ilosc);
                         _logger.AddLog("INFO", "Etap 2: dodano pozycję RW", new { symbol = pozycja.SymbolSurowca, ilosc = ilosc, fzId = odpowiedz.Context?.FzId, fzNumer = odpowiedz.Context?.FzNumer });
@@ -686,6 +695,29 @@ ORDER BY d.dok_DataWyst DESC";
             }
 
             return null;
+        }
+
+        private static void UstawIloscPozycji(dynamic pozycja, decimal ilosc, string symbol, string fzNumer)
+        {
+            try
+            {
+                pozycja.GetType().InvokeMember("IloscJm", BindingFlags.SetProperty, null, pozycja, new object[] { ilosc });
+                return;
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                pozycja.GetType().InvokeMember("Ilosc", BindingFlags.SetProperty, null, pozycja, new object[] { ilosc });
+                return;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Etap 2: Nie udało się ustawić ilości dla pozycji " + symbol + " w FZ " + fzNumer + ": " + ex.Message);
+                _logger.AddLog("ERROR", "Etap 2: błąd ustawienia ilości pozycji", new { symbol = symbol, fzNumer = fzNumer, stackTrace = ex.ToString() });
+            }
         }
 
         private static void UstawMagazynDlaRw(dynamic rw, dynamic subiekt, string fzNumer)
