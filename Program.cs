@@ -526,17 +526,74 @@ ORDER BY d.dok_DataWyst DESC";
                         continue;
                     }
 
-                    dynamic rw = subiekt.Dokumenty.Dodaj(13);
-                    Console.WriteLine("Etap 2: Utworzono obiekt RW dla FZ " + odpowiedz.Context?.FzNumer);
-                    _logger.AddLog("INFO", "Etap 2: utworzono obiekt RW", new { fzId = odpowiedz.Context?.FzId, fzNumer = odpowiedz.Context?.FzNumer });
+                    var magId = PobierzWartoscInt(subiekt, "MagazynId");
+                    Console.WriteLine("Etap 2: Aktywny MagazynId w Subiekcie: " + magId);
+                    
+                    if (magId <= 0)
+                    {
+                         // Proba pobrania z konfiguracji jesli w subiekcie 0
+                         var cfgMagIdStr = ConfigurationManager.AppSettings["SferaMagazynId"];
+                         var cfgMagId = ParseIntSetting(cfgMagIdStr, 0);
+                         if (cfgMagId > 0)
+                         {
+                             try 
+                             {
+                                 subiekt.MagazynId = cfgMagId;
+                                 magId = cfgMagId;
+                                 Console.WriteLine("Etap 2: Ustawiono MagazynId z konfiguracji: " + magId);
+                             }
+                             catch (Exception ex)
+                             {
+                                 Console.WriteLine("Etap 2: Błąd ustawiania MagazynId z konfiguracji: " + ex.Message);
+                             }
+                         }
+                         else
+                         {
+                             Console.WriteLine("Etap 2: OSTRZEŻENIE - MagazynId wynosi 0. Zapis może się nie udać.");
+                             _logger.AddLog("WARNING", "Etap 2: MagazynId wynosi 0", new { fzNumer = odpowiedz.Context?.FzNumer });
+                         }
+                    }
+                    else
+                    {
+                        // Upewnij sie ze jest ustawiony
+                        try
+                        {
+                            subiekt.MagazynId = magId;
+                        }
+                        catch { }
+                    }
+
+                    dynamic rw = null;
+                    try
+                    {
+                        rw = subiekt.Dokumenty.Dodaj(13);
+                        Console.WriteLine("Etap 2: Utworzono obiekt RW dla FZ " + odpowiedz.Context?.FzNumer);
+                        _logger.AddLog("INFO", "Etap 2: utworzono obiekt RW", new { fzId = odpowiedz.Context?.FzId, fzNumer = odpowiedz.Context?.FzNumer });
+                    }
+                    catch (Exception ex)
+                    {
+                        bledy++;
+                        Console.WriteLine("Etap 2: Błąd przy tworzeniu obiektu RW (Dokumenty.Dodaj): " + ex.Message);
+                        _logger.AddLog("ERROR", "Etap 2: błąd Dokumenty.Dodaj", new { stackTrace = ex.ToString() });
+                        continue;
+                    }
+
                     if (!string.IsNullOrWhiteSpace(odpowiedz.DaneDoRw.Opis))
                     {
-                        rw.Uwagi = odpowiedz.DaneDoRw.Opis;
-                        Console.WriteLine("Etap 2: Ustawiono uwagi RW dla FZ " + odpowiedz.Context?.FzNumer + ": " + odpowiedz.DaneDoRw.Opis);
-                        _logger.AddLog("INFO", "Etap 2: ustawiono uwagi RW", new { fzId = odpowiedz.Context?.FzId, fzNumer = odpowiedz.Context?.FzNumer, opis = odpowiedz.DaneDoRw.Opis });
+                        try
+                        {
+                            rw.Uwagi = odpowiedz.DaneDoRw.Opis;
+                            Console.WriteLine("Etap 2: Ustawiono uwagi RW dla FZ " + odpowiedz.Context?.FzNumer);
+                        }
+                        catch (Exception ex)
+                        {
+                             Console.WriteLine("Etap 2: Ostrzeżenie - nie udało się ustawić uwag: " + ex.Message);
+                        }
                     }
+
                     UstawDateDlaRw(rw, DateTime.Now, odpowiedz.Context?.FzNumer);
-                    var magId = UstawMagazynDlaRw(rw, subiekt, odpowiedz.Context?.FzNumer);
+                    // Magazyn jest juz ustawiony w kontekscie Subiekta, ale sprobujmy tez na dokumencie jesli sie rozni
+                    UstawMagazynDlaRw(rw, subiekt, odpowiedz.Context?.FzNumer);
 
                     var dodanePozycje = 0;
                     foreach (var pozycja in odpowiedz.DaneDoRw.Pozycje)
@@ -544,15 +601,14 @@ ORDER BY d.dok_DataWyst DESC";
                         if (!TryParseIlosc(pozycja.IloscLaczna, out var ilosc))
                         {
                             bledy++;
-                            Console.WriteLine("Etap 2: Niepoprawna ilość dla FZ " + odpowiedz.Context?.FzNumer + ", symbol: " + pozycja.SymbolSurowca + ", ilość: " + pozycja.IloscLaczna);
-                            _logger.AddLog("ERROR", "Etap 2: niepoprawna ilość", new { symbol = pozycja.SymbolSurowca, ilosc = pozycja.IloscLaczna, fzId = odpowiedz.Context?.FzId, fzNumer = odpowiedz.Context?.FzNumer });
+                            Console.WriteLine("Etap 2: Niepoprawna ilość dla FZ " + odpowiedz.Context?.FzNumer + ", symbol: " + pozycja.SymbolSurowca);
+                            _logger.AddLog("ERROR", "Etap 2: niepoprawna ilość", new { symbol = pozycja.SymbolSurowca });
                             continue;
                         }
 
                         if (ilosc <= 0)
                         {
-                            Console.WriteLine("Etap 2: Pominięto pozycję z ilością <= 0 dla FZ " + odpowiedz.Context?.FzNumer + ", symbol: " + pozycja.SymbolSurowca);
-                            _logger.AddLog("ERROR", "Etap 2: pominięto pozycję z ilością <= 0", new { symbol = pozycja.SymbolSurowca, ilosc = ilosc, fzId = odpowiedz.Context?.FzId, fzNumer = odpowiedz.Context?.FzNumer });
+                            Console.WriteLine("Etap 2: Pominięto pozycję z ilością <= 0 dla FZ " + odpowiedz.Context?.FzNumer);
                             continue;
                         }
 
@@ -560,8 +616,8 @@ ORDER BY d.dok_DataWyst DESC";
                         if (towar == null)
                         {
                             bledy++;
-                            Console.WriteLine("Etap 2: Nie znaleziono towaru " + pozycja.SymbolSurowca + " dla FZ " + odpowiedz.Context?.FzNumer);
-                            _logger.AddLog("ERROR", "Etap 2: nie znaleziono towaru", new { symbol = pozycja.SymbolSurowca, fzId = odpowiedz.Context?.FzId, fzNumer = odpowiedz.Context?.FzNumer });
+                            Console.WriteLine("Etap 2: Nie znaleziono towaru " + pozycja.SymbolSurowca);
+                            _logger.AddLog("ERROR", "Etap 2: nie znaleziono towaru", new { symbol = pozycja.SymbolSurowca });
                             continue;
                         }
 
@@ -569,48 +625,69 @@ ORDER BY d.dok_DataWyst DESC";
                         if (towarId <= 0)
                         {
                             bledy++;
-                            Console.WriteLine("Etap 2: Nie udało się ustalić Id towaru " + pozycja.SymbolSurowca + " dla FZ " + odpowiedz.Context?.FzNumer);
-                            _logger.AddLog("ERROR", "Etap 2: brak Id towaru", new { symbol = pozycja.SymbolSurowca, fzId = odpowiedz.Context?.FzId, fzNumer = odpowiedz.Context?.FzNumer });
+                            Console.WriteLine("Etap 2: Nie udało się ustalić Id towaru " + pozycja.SymbolSurowca);
                             continue;
                         }
 
-                        dynamic poz = rw.Pozycje.Dodaj(towarId);
-                        UstawIloscPozycji(poz, ilosc, pozycja.SymbolSurowca, odpowiedz.Context?.FzNumer);
-                        if (magId > 0)
+                        try
                         {
-                            UstawMagazynDlaPozycji(poz, magId, pozycja.SymbolSurowca, odpowiedz.Context?.FzNumer);
+                            dynamic poz = rw.Pozycje.Dodaj(towarId);
+                            UstawIloscPozycji(poz, ilosc, pozycja.SymbolSurowca, odpowiedz.Context?.FzNumer);
+                            
+                            if (magId > 0)
+                            {
+                                UstawMagazynDlaPozycji(poz, magId, pozycja.SymbolSurowca, odpowiedz.Context?.FzNumer);
+                            }
+                            
+                            if (!string.IsNullOrWhiteSpace(pozycja.Jednostka))
+                            {
+                                UstawJednostkePozycji(poz, pozycja.Jednostka, pozycja.SymbolSurowca, odpowiedz.Context?.FzNumer);
+                            }
+
+                            dodanePozycje++;
+                            Console.WriteLine("Etap 2: Dodano pozycję RW dla FZ " + odpowiedz.Context?.FzNumer + ", symbol: " + pozycja.SymbolSurowca + ", ilość: " + ilosc);
+                            _logger.AddLog("INFO", "Etap 2: dodano pozycję RW", new { symbol = pozycja.SymbolSurowca, ilosc = ilosc });
                         }
-                        if (!string.IsNullOrWhiteSpace(pozycja.Jednostka))
+                        catch (Exception ex)
                         {
-                            UstawJednostkePozycji(poz, pozycja.Jednostka, pozycja.SymbolSurowca, odpowiedz.Context?.FzNumer);
+                            bledy++;
+                            Console.WriteLine("Etap 2: Błąd dodawania pozycji " + pozycja.SymbolSurowca + ": " + ex.Message);
+                            _logger.AddLog("ERROR", "Etap 2: błąd dodawania pozycji", new { symbol = pozycja.SymbolSurowca, stackTrace = ex.ToString() });
                         }
-                        dodanePozycje++;
-                        Console.WriteLine("Etap 2: Dodano pozycję RW dla FZ " + odpowiedz.Context?.FzNumer + ", symbol: " + pozycja.SymbolSurowca + ", ilość: " + ilosc);
-                        _logger.AddLog("INFO", "Etap 2: dodano pozycję RW", new { symbol = pozycja.SymbolSurowca, ilosc = ilosc, fzId = odpowiedz.Context?.FzId, fzNumer = odpowiedz.Context?.FzNumer });
                     }
 
                     if (dodanePozycje == 0)
                     {
                         bledy++;
                         Console.WriteLine("Etap 2: RW bez pozycji dla FZ " + odpowiedz.Context?.FzNumer + ", pomijam zapis.");
-                        _logger.AddLog("ERROR", "Etap 2: RW bez pozycji, pominięto zapis", new { fzId = odpowiedz.Context?.FzId, fzNumer = odpowiedz.Context?.FzNumer });
                         try { rw.Zamknij(); } catch { }
                         continue;
                     }
 
-                    Console.WriteLine("Etap 2: Zapisuję RW dla FZ " + odpowiedz.Context?.FzNumer);
-                    rw.Zapisz();
-                    Console.WriteLine("Etap 2: Zamykam RW dla FZ " + odpowiedz.Context?.FzNumer);
-                    rw.Zamknij();
+                    try
+                    {
+                        Console.WriteLine("Etap 2: Zapisuję RW dla FZ " + odpowiedz.Context?.FzNumer);
+                        rw.Zapisz();
+                        Console.WriteLine("Etap 2: RW zapisane poprawnie dla FZ " + odpowiedz.Context?.FzNumer);
+                        _logger.AddLog("SUCCESS", "Etap 2: RW zapisane poprawnie", new { fzId = odpowiedz.Context?.FzId, fzNumer = odpowiedz.Context?.FzNumer });
+                    }
+                    catch (Exception ex)
+                    {
+                        bledy++;
+                        Console.WriteLine("Etap 2: Błąd zapisu RW dla FZ " + odpowiedz.Context?.FzNumer + ": " + ex.Message);
+                        _logger.AddLog("ERROR", "Etap 2: błąd zapisu RW", new { fzId = odpowiedz.Context?.FzId, fzNumer = odpowiedz.Context?.FzNumer, stackTrace = ex.ToString() });
+                    }
+                    finally
+                    {
+                        try { rw.Zamknij(); } catch { }
+                    }
                     utworzono++;
-                    Console.WriteLine("Etap 2: RW zapisane poprawnie dla FZ " + odpowiedz.Context?.FzNumer);
-                    _logger.AddLog("SUCCESS", "Etap 2: RW zapisane poprawnie", new { fzId = odpowiedz.Context?.FzId, fzNumer = odpowiedz.Context?.FzNumer, liczbaPozycji = dodanePozycje });
                 }
                 catch (Exception ex)
                 {
                     bledy++;
-                    Console.WriteLine("Etap 2: Błąd tworzenia RW dla FZ " + odpowiedz?.Context?.FzNumer + ": " + ex.Message);
-                    _logger.AddLog("ERROR", "Etap 2: błąd tworzenia RW", new { fzId = odpowiedz?.Context?.FzId, fzNumer = odpowiedz?.Context?.FzNumer, step = "tworzenie_zapis_zamkniecie", stackTrace = ex.ToString() });
+                    Console.WriteLine("Etap 2: Krytyczny błąd pętli RW dla FZ " + odpowiedz?.Context?.FzNumer + ": " + ex.Message);
+                    _logger.AddLog("ERROR", "Etap 2: krytyczny błąd pętli RW", new { stackTrace = ex.ToString() });
                 }
             }
 
@@ -708,12 +785,15 @@ ORDER BY d.dok_DataWyst DESC";
 
         private static void UstawIloscPozycji(dynamic pozycja, decimal ilosc, string symbol, string fzNumer)
         {
-            if (TrySetProperty(pozycja, "IloscJm", ilosc))
+            // Konwersja na double dla COM
+            double iloscDouble = (double)ilosc;
+
+            if (TrySetProperty(pozycja, "IloscJm", iloscDouble))
             {
                 return;
             }
 
-            if (TrySetProperty(pozycja, "Ilosc", ilosc))
+            if (TrySetProperty(pozycja, "Ilosc", iloscDouble))
             {
                 return;
             }
