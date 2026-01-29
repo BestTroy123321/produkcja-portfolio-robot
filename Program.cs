@@ -529,8 +529,16 @@ ORDER BY d.dok_DataWyst DESC";
                         rw.Uwagi = odpowiedz.DaneDoRw.Opis;
                     }
 
+                    var dodanePozycje = 0;
                     foreach (var pozycja in odpowiedz.DaneDoRw.Pozycje)
                     {
+                        if (pozycja.IloscLaczna <= 0)
+                        {
+                            Console.WriteLine("Etap 2: Pominięto pozycję z ilością <= 0 dla FZ " + odpowiedz.Context?.FzNumer + ", symbol: " + pozycja.SymbolSurowca);
+                            _logger.AddLog("ERROR", "Etap 2: pominięto pozycję z ilością <= 0", new { symbol = pozycja.SymbolSurowca, ilosc = pozycja.IloscLaczna, fzId = odpowiedz.Context?.FzId, fzNumer = odpowiedz.Context?.FzNumer });
+                            continue;
+                        }
+
                         var towar = PobierzTowarPoSymbolu(subiekt, pozycja.SymbolSurowca);
                         if (towar == null)
                         {
@@ -542,6 +550,16 @@ ORDER BY d.dok_DataWyst DESC";
 
                         dynamic poz = rw.Pozycje.Dodaj(towar);
                         poz.Ilosc = pozycja.IloscLaczna;
+                        dodanePozycje++;
+                    }
+
+                    if (dodanePozycje == 0)
+                    {
+                        bledy++;
+                        Console.WriteLine("Etap 2: RW bez pozycji dla FZ " + odpowiedz.Context?.FzNumer + ", pomijam zapis.");
+                        _logger.AddLog("ERROR", "Etap 2: RW bez pozycji, pominięto zapis", new { fzId = odpowiedz.Context?.FzId, fzNumer = odpowiedz.Context?.FzNumer });
+                        try { rw.Zamknij(); } catch { }
+                        continue;
                     }
 
                     rw.Zapisz();
