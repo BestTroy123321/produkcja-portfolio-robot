@@ -97,6 +97,48 @@ namespace SubiektConnector
         public List<FzPozycjaPayload> Produkty { get; set; }
     }
 
+    public class FzWebhookResponseDto
+    {
+        [JsonProperty("status")]
+        public string Status { get; set; }
+
+        [JsonProperty("context")]
+        public FzWebhookContextDto Context { get; set; }
+
+        [JsonProperty("dane_do_rw")]
+        public FzDaneDoRwDto DaneDoRw { get; set; }
+    }
+
+    public class FzWebhookContextDto
+    {
+        [JsonProperty("fz_id")]
+        public int FzId { get; set; }
+
+        [JsonProperty("fz_numer")]
+        public string FzNumer { get; set; }
+    }
+
+    public class FzDaneDoRwDto
+    {
+        [JsonProperty("opis")]
+        public string Opis { get; set; }
+
+        [JsonProperty("pozycje")]
+        public List<FzRwPozycjaDto> Pozycje { get; set; }
+    }
+
+    public class FzRwPozycjaDto
+    {
+        [JsonProperty("symbol_surowca")]
+        public string SymbolSurowca { get; set; }
+
+        [JsonProperty("ilosc_laczna")]
+        public decimal IloscLaczna { get; set; }
+
+        [JsonProperty("jednostka")]
+        public string Jednostka { get; set; }
+    }
+
     internal class Program
     {
         private static LoggerService _logger;
@@ -188,7 +230,7 @@ namespace SubiektConnector
                 Console.WriteLine("Etap 1: Pominięto poprawę ZD, przechodzę do etapu 2.");
                 _logger.AddLog("INFO", "Etap 2: rozpoczęto tworzenie RW na podstawie FZ");
                 Console.WriteLine("Etap 2: Tworzenie RW na podstawie FZ");
-                ExecuteFzWebhook(connectionString);
+                ExecuteFzWebhook(connectionString, subiekt);
                 return;
             }
 
@@ -281,7 +323,7 @@ namespace SubiektConnector
 
             _logger.AddLog("INFO", "Etap 2: rozpoczęto tworzenie RW na podstawie FZ");
             Console.WriteLine("Etap 2: Tworzenie RW na podstawie FZ");
-            ExecuteFzWebhook(connectionString);
+            ExecuteFzWebhook(connectionString, subiekt);
         }
 
         private static string GetSqlQuery()
@@ -332,7 +374,7 @@ WHERE
 ORDER BY d.dok_DataWyst DESC";
         }
 
-        private static void ExecuteFzWebhook(string connectionString)
+        private static void ExecuteFzWebhook(string connectionString, dynamic subiekt)
         {
             var fzWebhookUrl = ConfigurationManager.AppSettings["FzWebhookUrl"];
             if (string.IsNullOrWhiteSpace(fzWebhookUrl))
@@ -402,19 +444,155 @@ ORDER BY d.dok_DataWyst DESC";
             _logger.AddLog("SUCCESS", "Etap 2: znaleziono " + dokumenty.Count + " FZ z " + liczbaPozycji + " produktami", new { liczbaFz = dokumenty.Count, liczbaPozycji = liczbaPozycji });
 
             var payload = JsonConvert.SerializeObject(new List<FzPayload>(dokumenty.Values));
+            string responseBody = null;
             try
             {
                 using (var httpClient = new HttpClient())
                 using (var content = new StringContent(payload, Encoding.UTF8, "application/json"))
                 {
-                    httpClient.PostAsync(fzWebhookUrl, content).GetAwaiter().GetResult();
+                    var response = httpClient.PostAsync(fzWebhookUrl, content).GetAwaiter().GetResult();
+                    responseBody = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                    if (response.StatusCode != HttpStatusCode.OK)
+                    {
+                        Console.WriteLine("Etap 2: Webhook zwrócił błędny status.");
+                        _logger.AddLog("ERROR", "Etap 2: webhook zwrócił błędny status", new { stackTrace = responseBody });
+                        return;
+                    }
                 }
             }
             catch (Exception ex)
             {
                 Console.WriteLine("Etap 2: Błąd podczas wysyłki webhooka: " + ex.Message);
                 _logger.AddLog("ERROR", "Etap 2: błąd wysyłki webhooka", new { stackTrace = ex.ToString() });
+                return;
             }
+
+            _logger.AddLog("INFO", "Etap 2: rozpoczęto tworzenie RW z odpowiedzi webhooka");
+            Console.WriteLine("Etap 2: Tworzenie RW z odpowiedzi webhooka");
+            PrzetworzRwZWebhooka(responseBody, subiekt);
+        }
+
+        private static void PrzetworzRwZWebhooka(string responseBody, dynamic subiekt)
+        {
+            if (string.IsNullOrWhiteSpace(responseBody))
+            {
+                Console.WriteLine("Etap 2: Webhook nie zwrócił treści, pomijam RW.");
+                _logger.AddLog("INFO", "Etap 2: webhook nie zwrócił treści, pominięto RW");
+                return;
+            }
+
+            List<FzWebhookResponseDto> odpowiedzi;
+            try
+            {
+                odpowiedzi = JsonConvert.DeserializeObject<List<FzWebhookResponseDto>>(responseBody) ?? new List<FzWebhookResponseDto>();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Etap 2: Nie udało się zdeserializować odpowiedzi webhooka.");
+                _logger.AddLog("ERROR", "Etap 2: błąd deserializacji odpowiedzi webhooka", new { stackTrace = ex.ToString() });
+                return;
+            }
+
+            if (odpowiedzi.Count == 0)
+            {
+                Console.WriteLine("Etap 2: Brak danych do RW.");
+                _logger.AddLog("INFO", "Etap 2: brak danych do RW");
+                return;
+            }
+
+            var utworzono = 0;
+            var bledy = 0;
+
+            foreach (var odpowiedz in odpowiedzi)
+            {
+                try
+                {
+                    if (odpowiedz == null || !string.Equals(odpowiedz.Status, "success", StringComparison.OrdinalIgnoreCase))
+                    {
+                        bledy++;
+                        _logger.AddLog("ERROR", "Etap 2: webhook zwrócił status inny niż success", new { fzId = odpowiedz?.Context?.FzId, fzNumer = odpowiedz?.Context?.FzNumer });
+                        continue;
+                    }
+
+                    if (odpowiedz.DaneDoRw == null || odpowiedz.DaneDoRw.Pozycje == null || odpowiedz.DaneDoRw.Pozycje.Count == 0)
+                    {
+                        bledy++;
+                        _logger.AddLog("ERROR", "Etap 2: brak pozycji do RW", new { fzId = odpowiedz.Context?.FzId, fzNumer = odpowiedz.Context?.FzNumer });
+                        continue;
+                    }
+
+                    dynamic rw = subiekt.Dokumenty.Dodaj(13);
+                    if (!string.IsNullOrWhiteSpace(odpowiedz.DaneDoRw.Opis))
+                    {
+                        rw.Uwagi = odpowiedz.DaneDoRw.Opis;
+                    }
+
+                    foreach (var pozycja in odpowiedz.DaneDoRw.Pozycje)
+                    {
+                        var towar = PobierzTowarPoSymbolu(subiekt, pozycja.SymbolSurowca);
+                        if (towar == null)
+                        {
+                            bledy++;
+                            _logger.AddLog("ERROR", "Etap 2: nie znaleziono towaru", new { symbol = pozycja.SymbolSurowca, fzId = odpowiedz.Context?.FzId, fzNumer = odpowiedz.Context?.FzNumer });
+                            continue;
+                        }
+
+                        dynamic poz = rw.Pozycje.Dodaj(towar);
+                        poz.Ilosc = pozycja.IloscLaczna;
+                    }
+
+                    rw.Zapisz();
+                    rw.Zamknij();
+                    utworzono++;
+                }
+                catch (Exception ex)
+                {
+                    bledy++;
+                    _logger.AddLog("ERROR", "Etap 2: błąd tworzenia RW", new { stackTrace = ex.ToString() });
+                }
+            }
+
+            _logger.AddLog("SUCCESS", "Etap 2: utworzono RW", new { utworzono = utworzono, bledy = bledy });
+            Console.WriteLine("Etap 2: Utworzono RW: " + utworzono + ", błędy: " + bledy);
+        }
+
+        private static dynamic PobierzTowarPoSymbolu(dynamic subiekt, string symbol)
+        {
+            if (string.IsNullOrWhiteSpace(symbol))
+            {
+                return null;
+            }
+
+            try
+            {
+                return subiekt.Towary.Wczytaj(symbol);
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                var lista = subiekt.Towary.Wyszukaj(symbol);
+                if (lista != null)
+                {
+                    try
+                    {
+                        if (lista.Liczba > 0)
+                        {
+                            return lista.Element(1);
+                        }
+                    }
+                    catch
+                    {
+                    }
+                }
+            }
+            catch
+            {
+            }
+
+            return null;
         }
 
         private static dynamic ZalogujSubiektGT()
