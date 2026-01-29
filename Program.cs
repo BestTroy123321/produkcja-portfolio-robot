@@ -722,7 +722,8 @@ ORDER BY d.dok_DataWyst DESC";
                     return intValue;
                 }
 
-                if (int.TryParse(value.ToString(), out var parsed))
+                int parsed;
+                if (int.TryParse(value.ToString(), out parsed))
                 {
                     return parsed;
                 }
