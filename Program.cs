@@ -535,6 +535,7 @@ ORDER BY d.dok_DataWyst DESC";
                         Console.WriteLine("Etap 2: Ustawiono uwagi RW dla FZ " + odpowiedz.Context?.FzNumer + ": " + odpowiedz.DaneDoRw.Opis);
                         _logger.AddLog("INFO", "Etap 2: ustawiono uwagi RW", new { fzId = odpowiedz.Context?.FzId, fzNumer = odpowiedz.Context?.FzNumer, opis = odpowiedz.DaneDoRw.Opis });
                     }
+                    UstawMagazynDlaRw(rw, subiekt, odpowiedz.Context?.FzNumer);
 
                     var dodanePozycje = 0;
                     foreach (var pozycja in odpowiedz.DaneDoRw.Pozycje)
@@ -634,6 +635,18 @@ ORDER BY d.dok_DataWyst DESC";
             var normalized = symbol.Trim();
             try
             {
+                var towar = subiekt.Towary.GetType().InvokeMember("Wczytaj", BindingFlags.InvokeMethod, null, subiekt.Towary, new object[] { normalized });
+                if (towar != null)
+                {
+                    return towar;
+                }
+            }
+            catch
+            {
+            }
+
+            try
+            {
                 var lista = subiekt.Towary.Wyszukaj(normalized);
                 if (lista != null)
                 {
@@ -646,6 +659,19 @@ ORDER BY d.dok_DataWyst DESC";
                             var symbolTowaru = PobierzWartoscString(element, "Symbol");
                             if (!string.IsNullOrWhiteSpace(symbolTowaru) && string.Equals(symbolTowaru.Trim(), normalized, StringComparison.OrdinalIgnoreCase))
                             {
+                                var towarId = PobierzWartoscInt(element, "Id");
+                                if (towarId > 0)
+                                {
+                                    try
+                                    {
+                                        return subiekt.Towary.GetType().InvokeMember("Wczytaj", BindingFlags.InvokeMethod, null, subiekt.Towary, new object[] { towarId });
+                                    }
+                                    catch
+                                    {
+                                        return element;
+                                    }
+                                }
+
                                 return element;
                             }
                         }
@@ -659,15 +685,53 @@ ORDER BY d.dok_DataWyst DESC";
             {
             }
 
+            return null;
+        }
+
+        private static void UstawMagazynDlaRw(dynamic rw, dynamic subiekt, string fzNumer)
+        {
             try
             {
-                return subiekt.Towary.Wczytaj(normalized);
+                var magId = PobierzWartoscInt(subiekt, "MagazynId");
+                if (magId > 0)
+                {
+                    rw.GetType().InvokeMember("MagazynId", BindingFlags.SetProperty, null, rw, new object[] { magId });
+                    Console.WriteLine("Etap 2: Ustawiono MagazynId=" + magId + " dla FZ " + fzNumer);
+                    _logger.AddLog("INFO", "Etap 2: ustawiono MagazynId", new { magazynId = magId, fzNumer = fzNumer });
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Etap 2: Nie udało się ustawić MagazynId dla FZ " + fzNumer + ": " + ex.Message);
+                _logger.AddLog("ERROR", "Etap 2: błąd ustawienia MagazynId", new { fzNumer = fzNumer, stackTrace = ex.ToString() });
+            }
+        }
+
+        private static int PobierzWartoscInt(dynamic obiekt, string nazwa)
+        {
+            try
+            {
+                var value = obiekt.GetType().InvokeMember(nazwa, BindingFlags.GetProperty, null, obiekt, null);
+                if (value == null)
+                {
+                    return 0;
+                }
+
+                if (value is int intValue)
+                {
+                    return intValue;
+                }
+
+                if (int.TryParse(value.ToString(), out var parsed))
+                {
+                    return parsed;
+                }
             }
             catch
             {
             }
 
-            return null;
+            return 0;
         }
 
         private static dynamic ZalogujSubiektGT()
