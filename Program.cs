@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Configuration;
 using System.Data.SqlClient;
+using System.Globalization;
 using System.Net;
 using System.Net.Http;
 using System.Text;
@@ -133,7 +134,7 @@ namespace SubiektConnector
         public string SymbolSurowca { get; set; }
 
         [JsonProperty("ilosc_laczna")]
-        public decimal IloscLaczna { get; set; }
+        public string IloscLaczna { get; set; }
 
         [JsonProperty("jednostka")]
         public string Jednostka { get; set; }
@@ -532,10 +533,18 @@ ORDER BY d.dok_DataWyst DESC";
                     var dodanePozycje = 0;
                     foreach (var pozycja in odpowiedz.DaneDoRw.Pozycje)
                     {
-                        if (pozycja.IloscLaczna <= 0)
+                        if (!TryParseIlosc(pozycja.IloscLaczna, out var ilosc))
+                        {
+                            bledy++;
+                            Console.WriteLine("Etap 2: Niepoprawna ilość dla FZ " + odpowiedz.Context?.FzNumer + ", symbol: " + pozycja.SymbolSurowca + ", ilość: " + pozycja.IloscLaczna);
+                            _logger.AddLog("ERROR", "Etap 2: niepoprawna ilość", new { symbol = pozycja.SymbolSurowca, ilosc = pozycja.IloscLaczna, fzId = odpowiedz.Context?.FzId, fzNumer = odpowiedz.Context?.FzNumer });
+                            continue;
+                        }
+
+                        if (ilosc <= 0)
                         {
                             Console.WriteLine("Etap 2: Pominięto pozycję z ilością <= 0 dla FZ " + odpowiedz.Context?.FzNumer + ", symbol: " + pozycja.SymbolSurowca);
-                            _logger.AddLog("ERROR", "Etap 2: pominięto pozycję z ilością <= 0", new { symbol = pozycja.SymbolSurowca, ilosc = pozycja.IloscLaczna, fzId = odpowiedz.Context?.FzId, fzNumer = odpowiedz.Context?.FzNumer });
+                            _logger.AddLog("ERROR", "Etap 2: pominięto pozycję z ilością <= 0", new { symbol = pozycja.SymbolSurowca, ilosc = ilosc, fzId = odpowiedz.Context?.FzId, fzNumer = odpowiedz.Context?.FzNumer });
                             continue;
                         }
 
@@ -549,7 +558,7 @@ ORDER BY d.dok_DataWyst DESC";
                         }
 
                         dynamic poz = rw.Pozycje.Dodaj(towar);
-                        poz.Ilosc = pozycja.IloscLaczna;
+                        poz.Ilosc = ilosc;
                         dodanePozycje++;
                     }
 
@@ -578,6 +587,31 @@ ORDER BY d.dok_DataWyst DESC";
             Console.WriteLine("Etap 2: Utworzono RW: " + utworzono + ", błędy: " + bledy);
         }
 
+        private static bool TryParseIlosc(string rawValue, out decimal ilosc)
+        {
+            ilosc = 0m;
+            if (string.IsNullOrWhiteSpace(rawValue))
+            {
+                return false;
+            }
+
+            var trimmed = rawValue.Trim();
+            if (decimal.TryParse(trimmed, NumberStyles.Number, CultureInfo.InvariantCulture, out ilosc))
+            {
+                ilosc = Math.Round(ilosc, 4);
+                return true;
+            }
+
+            var plCulture = new CultureInfo("pl-PL");
+            if (decimal.TryParse(trimmed, NumberStyles.Number, plCulture, out ilosc))
+            {
+                ilosc = Math.Round(ilosc, 4);
+                return true;
+            }
+
+            return false;
+        }
+
         private static dynamic PobierzTowarPoSymbolu(dynamic subiekt, string symbol)
         {
             if (string.IsNullOrWhiteSpace(symbol))
@@ -585,9 +619,29 @@ ORDER BY d.dok_DataWyst DESC";
                 return null;
             }
 
+            var normalized = symbol.Trim();
             try
             {
-                return subiekt.Towary.Wczytaj(symbol);
+                var lista = subiekt.Towary.Wyszukaj(normalized);
+                if (lista != null)
+                {
+                    try
+                    {
+                        var liczba = (int)lista.Liczba;
+                        for (var i = 1; i <= liczba; i++)
+                        {
+                            var element = lista.Element(i);
+                            var symbolTowaru = PobierzWartoscString(element, "Symbol");
+                            if (!string.IsNullOrWhiteSpace(symbolTowaru) && string.Equals(symbolTowaru.Trim(), normalized, StringComparison.OrdinalIgnoreCase))
+                            {
+                                return element;
+                            }
+                        }
+                    }
+                    catch
+                    {
+                    }
+                }
             }
             catch
             {
@@ -595,20 +649,7 @@ ORDER BY d.dok_DataWyst DESC";
 
             try
             {
-                var lista = subiekt.Towary.Wyszukaj(symbol);
-                if (lista != null)
-                {
-                    try
-                    {
-                        if (lista.Liczba > 0)
-                        {
-                            return lista.Element(1);
-                        }
-                    }
-                    catch
-                    {
-                    }
-                }
+                return subiekt.Towary.Wczytaj(normalized);
             }
             catch
             {
