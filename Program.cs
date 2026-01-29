@@ -535,7 +535,8 @@ ORDER BY d.dok_DataWyst DESC";
                         Console.WriteLine("Etap 2: Ustawiono uwagi RW dla FZ " + odpowiedz.Context?.FzNumer + ": " + odpowiedz.DaneDoRw.Opis);
                         _logger.AddLog("INFO", "Etap 2: ustawiono uwagi RW", new { fzId = odpowiedz.Context?.FzId, fzNumer = odpowiedz.Context?.FzNumer, opis = odpowiedz.DaneDoRw.Opis });
                     }
-                    UstawMagazynDlaRw(rw, subiekt, odpowiedz.Context?.FzNumer);
+                    UstawDateDlaRw(rw, DateTime.Now, odpowiedz.Context?.FzNumer);
+                    var magId = UstawMagazynDlaRw(rw, subiekt, odpowiedz.Context?.FzNumer);
 
                     var dodanePozycje = 0;
                     foreach (var pozycja in odpowiedz.DaneDoRw.Pozycje)
@@ -575,6 +576,14 @@ ORDER BY d.dok_DataWyst DESC";
 
                         dynamic poz = rw.Pozycje.Dodaj(towarId);
                         UstawIloscPozycji(poz, ilosc, pozycja.SymbolSurowca, odpowiedz.Context?.FzNumer);
+                        if (magId > 0)
+                        {
+                            UstawMagazynDlaPozycji(poz, magId, pozycja.SymbolSurowca, odpowiedz.Context?.FzNumer);
+                        }
+                        if (!string.IsNullOrWhiteSpace(pozycja.Jednostka))
+                        {
+                            UstawJednostkePozycji(poz, pozycja.Jednostka, pozycja.SymbolSurowca, odpowiedz.Context?.FzNumer);
+                        }
                         dodanePozycje++;
                         Console.WriteLine("Etap 2: Dodano pozycję RW dla FZ " + odpowiedz.Context?.FzNumer + ", symbol: " + pozycja.SymbolSurowca + ", ilość: " + ilosc);
                         _logger.AddLog("INFO", "Etap 2: dodano pozycję RW", new { symbol = pozycja.SymbolSurowca, ilosc = ilosc, fzId = odpowiedz.Context?.FzId, fzNumer = odpowiedz.Context?.FzNumer });
@@ -699,43 +708,104 @@ ORDER BY d.dok_DataWyst DESC";
 
         private static void UstawIloscPozycji(dynamic pozycja, decimal ilosc, string symbol, string fzNumer)
         {
-            try
+            if (TrySetProperty(pozycja, "IloscJm", ilosc))
             {
-                pozycja.GetType().InvokeMember("IloscJm", BindingFlags.SetProperty, null, pozycja, new object[] { ilosc });
                 return;
-            }
-            catch
-            {
             }
 
-            try
+            if (TrySetProperty(pozycja, "Ilosc", ilosc))
             {
-                pozycja.GetType().InvokeMember("Ilosc", BindingFlags.SetProperty, null, pozycja, new object[] { ilosc });
                 return;
             }
-            catch (Exception ex)
-            {
-                Console.WriteLine("Etap 2: Nie udało się ustawić ilości dla pozycji " + symbol + " w FZ " + fzNumer + ": " + ex.Message);
-                _logger.AddLog("ERROR", "Etap 2: błąd ustawienia ilości pozycji", new { symbol = symbol, fzNumer = fzNumer, stackTrace = ex.ToString() });
-            }
+
+            Console.WriteLine("Etap 2: Nie udało się ustawić ilości dla pozycji " + symbol + " w FZ " + fzNumer);
+            _logger.AddLog("ERROR", "Etap 2: błąd ustawienia ilości pozycji", new { symbol = symbol, fzNumer = fzNumer });
         }
 
-        private static void UstawMagazynDlaRw(dynamic rw, dynamic subiekt, string fzNumer)
+        private static void UstawDateDlaRw(dynamic rw, DateTime data, string fzNumer)
+        {
+            if (TrySetProperty(rw, "DataWystawienia", data))
+            {
+                return;
+            }
+
+            if (TrySetProperty(rw, "Data", data))
+            {
+                return;
+            }
+
+            if (TrySetProperty(rw, "DataDokumentu", data))
+            {
+                return;
+            }
+
+            Console.WriteLine("Etap 2: Nie udało się ustawić daty RW dla FZ " + fzNumer);
+            _logger.AddLog("ERROR", "Etap 2: błąd ustawienia daty RW", new { fzNumer = fzNumer });
+        }
+
+        private static int UstawMagazynDlaRw(dynamic rw, dynamic subiekt, string fzNumer)
         {
             try
             {
                 var magId = PobierzWartoscInt(subiekt, "MagazynId");
-                if (magId > 0)
+                if (magId > 0 && TrySetProperty(rw, "MagazynId", magId))
                 {
-                    rw.GetType().InvokeMember("MagazynId", BindingFlags.SetProperty, null, rw, new object[] { magId });
                     Console.WriteLine("Etap 2: Ustawiono MagazynId=" + magId + " dla FZ " + fzNumer);
                     _logger.AddLog("INFO", "Etap 2: ustawiono MagazynId", new { magazynId = magId, fzNumer = fzNumer });
+                    return magId;
                 }
             }
             catch (Exception ex)
             {
                 Console.WriteLine("Etap 2: Nie udało się ustawić MagazynId dla FZ " + fzNumer + ": " + ex.Message);
                 _logger.AddLog("ERROR", "Etap 2: błąd ustawienia MagazynId", new { fzNumer = fzNumer, stackTrace = ex.ToString() });
+            }
+
+            return 0;
+        }
+
+        private static void UstawMagazynDlaPozycji(dynamic pozycja, int magId, string symbol, string fzNumer)
+        {
+            if (TrySetProperty(pozycja, "MagazynId", magId))
+            {
+                return;
+            }
+
+            Console.WriteLine("Etap 2: Nie udało się ustawić MagazynId pozycji " + symbol + " dla FZ " + fzNumer);
+            _logger.AddLog("ERROR", "Etap 2: błąd ustawienia MagazynId pozycji", new { symbol = symbol, fzNumer = fzNumer, magazynId = magId });
+        }
+
+        private static void UstawJednostkePozycji(dynamic pozycja, string jednostka, string symbol, string fzNumer)
+        {
+            if (TrySetProperty(pozycja, "Jednostka", jednostka))
+            {
+                return;
+            }
+
+            if (TrySetProperty(pozycja, "JednMiary", jednostka))
+            {
+                return;
+            }
+
+            if (TrySetProperty(pozycja, "JednostkaMiary", jednostka))
+            {
+                return;
+            }
+
+            Console.WriteLine("Etap 2: Nie udało się ustawić jednostki dla pozycji " + symbol + " w FZ " + fzNumer);
+            _logger.AddLog("ERROR", "Etap 2: błąd ustawienia jednostki pozycji", new { symbol = symbol, fzNumer = fzNumer, jednostka = jednostka });
+        }
+
+        private static bool TrySetProperty(dynamic obiekt, string nazwa, object wartosc)
+        {
+            try
+            {
+                obiekt.GetType().InvokeMember(nazwa, BindingFlags.SetProperty, null, obiekt, new[] { wartosc });
+                return true;
+            }
+            catch
+            {
+                return false;
             }
         }
 
