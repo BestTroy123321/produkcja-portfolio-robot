@@ -184,6 +184,11 @@ namespace SubiektConnector
             {
                 Console.WriteLine("Brak ustawienia appSettings: ZdWebhookUrl");
                 _logger.AddLog("ERROR", "Brak ustawienia appSettings: ZdWebhookUrl", new { stackTrace = Environment.StackTrace });
+                _logger.AddLog("INFO", "Etap 1: pominięto poprawę ZD, przechodzę do etapu 2");
+                Console.WriteLine("Etap 1: Pominięto poprawę ZD, przechodzę do etapu 2.");
+                _logger.AddLog("INFO", "Etap 2: rozpoczęto tworzenie RW na podstawie FZ");
+                Console.WriteLine("Etap 2: Tworzenie RW na podstawie FZ");
+                ExecuteFzWebhook(connectionString);
                 return;
             }
 
@@ -247,30 +252,30 @@ namespace SubiektConnector
                 Console.WriteLine("Odpowiedź serwera: " + (int)response.StatusCode + " " + response.ReasonPhrase);
                 if (response.StatusCode != HttpStatusCode.OK)
                 {
-                    Console.WriteLine("Webhook zwrócił błędny status, kończę działanie.");
-                    _logger.AddLog("ERROR", "Webhook zwrócił błędny status", new { stackTrace = responseBody });
-                    return;
+                    Console.WriteLine("Etap 1: Webhook zwrócił błędny status, pomijam poprawę ZD.");
+                    _logger.AddLog("ERROR", "Etap 1: webhook zwrócił błędny status", new { stackTrace = responseBody });
                 }
-
-                if (string.IsNullOrWhiteSpace(responseBody))
+                else if (string.IsNullOrWhiteSpace(responseBody))
                 {
-                    Console.WriteLine("Webhook nie zwrócił treści, kończę działanie.");
-                    _logger.AddLog("INFO", "Webhook nie zwrócił treści");
-                    return;
+                    Console.WriteLine("Etap 1: Webhook nie zwrócił treści, pomijam poprawę ZD.");
+                    _logger.AddLog("INFO", "Etap 1: webhook nie zwrócił treści");
                 }
-
-                Console.WriteLine("Treść odpowiedzi: " + responseBody);
-                if (!CzyPoprawnaOdpowiedzWebhooka(responseBody))
+                else
                 {
-                    Console.WriteLine("Webhook nie zwrócił wymaganych danych, kończę działanie.");
-                    _logger.AddLog("ERROR", "Webhook nie zwrócił wymaganych danych", new { stackTrace = responseBody });
-                    return;
-                }
-
-                var result = PrzetworzDokumenty(responseBody, subiekt);
-                if (result != null)
-                {
-                    _logger.AddLog("SUCCESS", "Podsumowanie aktualizacji", new { zaktualizowano = result.Zaktualizowano, bledy = result.Bledy });
+                    Console.WriteLine("Treść odpowiedzi: " + responseBody);
+                    if (!CzyPoprawnaOdpowiedzWebhooka(responseBody))
+                    {
+                        Console.WriteLine("Etap 1: Webhook nie zwrócił wymaganych danych, pomijam poprawę ZD.");
+                        _logger.AddLog("ERROR", "Etap 1: webhook nie zwrócił wymaganych danych", new { stackTrace = responseBody });
+                    }
+                    else
+                    {
+                        var result = PrzetworzDokumenty(responseBody, subiekt);
+                        if (result != null)
+                        {
+                            _logger.AddLog("SUCCESS", "Podsumowanie aktualizacji", new { zaktualizowano = result.Zaktualizowano, bledy = result.Bledy });
+                        }
+                    }
                 }
             }
 
