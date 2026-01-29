@@ -3,6 +3,7 @@
   <appSettings>
     <add key="N8nUrl" value="https://example.com/webhook/test" />
     <add key="LogWebhookUrl" value="https://example.com/webhook/logs" />
+    <add key="HeartbeatUrl" value="https://example.com/webhook/heartbeat" />
     <add key="IntervalMinutes" value="30" />
     <add key="SferaServer" value="SERVER_NAME\INSERTGT" />
     <add key="SferaDatabase" value="FIRMA_TEST" />

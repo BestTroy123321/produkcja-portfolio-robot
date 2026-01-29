@@ -73,6 +73,7 @@ namespace SubiektConnector
     internal class Program
     {
         private static LoggerService _logger;
+        private static Timer _heartbeatTimer;
 
         [STAThread]
         private static void Main(string[] args)
@@ -86,6 +87,7 @@ namespace SubiektConnector
                 intervalMinutes = 30;
             }
 
+            StartHeartbeat();
             RunLoop(intervalMinutes);
         }
 
@@ -203,7 +205,7 @@ namespace SubiektConnector
             }
 
             Console.WriteLine("Znaleziono " + dokumenty.Count + " dokumentów.");
-            _logger.AddLog("SUCCESS", "Pobrano listę dokumentów", new { count = dokumenty.Count });
+            _logger.AddLog("SUCCESS", "Pobrano " + pozycje.Count + " pozycji w " + dokumenty.Count + " dokumentach", new { liczbaDokumentow = dokumenty.Count, liczbaPozycji = pozycje.Count });
 
             var payload = JsonConvert.SerializeObject(new List<DokumentPayload>(dokumenty.Values));
             Console.WriteLine("Wysyłanie do n8n...");
@@ -225,7 +227,7 @@ namespace SubiektConnector
                 if (string.IsNullOrWhiteSpace(responseBody))
                 {
                     Console.WriteLine("Webhook nie zwrócił treści, kończę działanie.");
-                    _logger.AddLog("ERROR", "Webhook nie zwrócił treści", new { stackTrace = Environment.StackTrace });
+                    _logger.AddLog("INFO", "Webhook nie zwrócił treści");
                     return;
                 }
 
@@ -362,6 +364,38 @@ ORDER BY d.dok_DataWyst DESC";
             }
 
             return defaultValue;
+        }
+
+        private static void StartHeartbeat()
+        {
+            var heartbeatUrl = ConfigurationManager.AppSettings["HeartbeatUrl"];
+            if (string.IsNullOrWhiteSpace(heartbeatUrl))
+            {
+                return;
+            }
+
+            _heartbeatTimer = new Timer(_ =>
+            {
+                try
+                {
+                    var payloadObj = new
+                    {
+                        timestamp = DateTime.UtcNow.ToString("o"),
+                        status = "ALIVE",
+                        source = "ROBOT_SUBIEKT"
+                    };
+
+                    var payload = JsonConvert.SerializeObject(payloadObj);
+                    using (var httpClient = new HttpClient())
+                    using (var content = new StringContent(payload, Encoding.UTF8, "application/json"))
+                    {
+                        httpClient.PostAsync(heartbeatUrl, content).GetAwaiter().GetResult();
+                    }
+                }
+                catch
+                {
+                }
+            }, null, TimeSpan.Zero, TimeSpan.FromMinutes(5));
         }
 
         private static UpdateResult PrzetworzDokumenty(string jsonResponse, dynamic subiekt)
