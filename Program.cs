@@ -508,6 +508,8 @@ ORDER BY d.dok_DataWyst DESC";
             {
                 try
                 {
+                    Console.WriteLine("Etap 2: Start RW dla FZ " + odpowiedz?.Context?.FzNumer);
+                    _logger.AddLog("INFO", "Etap 2: start RW", new { fzId = odpowiedz?.Context?.FzId, fzNumer = odpowiedz?.Context?.FzNumer });
                     if (odpowiedz == null || !string.Equals(odpowiedz.Status, "success", StringComparison.OrdinalIgnoreCase))
                     {
                         bledy++;
@@ -525,9 +527,13 @@ ORDER BY d.dok_DataWyst DESC";
                     }
 
                     dynamic rw = subiekt.Dokumenty.Dodaj(13);
+                    Console.WriteLine("Etap 2: Utworzono obiekt RW dla FZ " + odpowiedz.Context?.FzNumer);
+                    _logger.AddLog("INFO", "Etap 2: utworzono obiekt RW", new { fzId = odpowiedz.Context?.FzId, fzNumer = odpowiedz.Context?.FzNumer });
                     if (!string.IsNullOrWhiteSpace(odpowiedz.DaneDoRw.Opis))
                     {
                         rw.Uwagi = odpowiedz.DaneDoRw.Opis;
+                        Console.WriteLine("Etap 2: Ustawiono uwagi RW dla FZ " + odpowiedz.Context?.FzNumer + ": " + odpowiedz.DaneDoRw.Opis);
+                        _logger.AddLog("INFO", "Etap 2: ustawiono uwagi RW", new { fzId = odpowiedz.Context?.FzId, fzNumer = odpowiedz.Context?.FzNumer, opis = odpowiedz.DaneDoRw.Opis });
                     }
 
                     var dodanePozycje = 0;
@@ -560,6 +566,8 @@ ORDER BY d.dok_DataWyst DESC";
                         dynamic poz = rw.Pozycje.Dodaj(towar);
                         poz.Ilosc = ilosc;
                         dodanePozycje++;
+                        Console.WriteLine("Etap 2: Dodano pozycję RW dla FZ " + odpowiedz.Context?.FzNumer + ", symbol: " + pozycja.SymbolSurowca + ", ilość: " + ilosc);
+                        _logger.AddLog("INFO", "Etap 2: dodano pozycję RW", new { symbol = pozycja.SymbolSurowca, ilosc = ilosc, fzId = odpowiedz.Context?.FzId, fzNumer = odpowiedz.Context?.FzNumer });
                     }
 
                     if (dodanePozycje == 0)
@@ -571,15 +579,19 @@ ORDER BY d.dok_DataWyst DESC";
                         continue;
                     }
 
+                    Console.WriteLine("Etap 2: Zapisuję RW dla FZ " + odpowiedz.Context?.FzNumer);
                     rw.Zapisz();
+                    Console.WriteLine("Etap 2: Zamykam RW dla FZ " + odpowiedz.Context?.FzNumer);
                     rw.Zamknij();
                     utworzono++;
+                    Console.WriteLine("Etap 2: RW zapisane poprawnie dla FZ " + odpowiedz.Context?.FzNumer);
+                    _logger.AddLog("SUCCESS", "Etap 2: RW zapisane poprawnie", new { fzId = odpowiedz.Context?.FzId, fzNumer = odpowiedz.Context?.FzNumer, liczbaPozycji = dodanePozycje });
                 }
                 catch (Exception ex)
                 {
                     bledy++;
                     Console.WriteLine("Etap 2: Błąd tworzenia RW dla FZ " + odpowiedz?.Context?.FzNumer + ": " + ex.Message);
-                    _logger.AddLog("ERROR", "Etap 2: błąd tworzenia RW", new { stackTrace = ex.ToString() });
+                    _logger.AddLog("ERROR", "Etap 2: błąd tworzenia RW", new { fzId = odpowiedz?.Context?.FzId, fzNumer = odpowiedz?.Context?.FzNumer, step = "tworzenie_zapis_zamkniecie", stackTrace = ex.ToString() });
                 }
             }
 
