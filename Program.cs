@@ -264,7 +264,7 @@ JOIN sl_GrupaTw g ON t.tw_IdGrupa = g.grt_Id
 WHERE 
     d.dok_Typ = 15
     AND d.dok_Status IN (5, 6, 7) 
-    AND d.dok_DataWyst >= DATEADD(hour, -48, GETDATE()) 
+    AND d.dok_DataWyst >= DATEADD(hour, -168, GETDATE()) 
     AND g.grt_Nazwa = 'KONFEKCJA' 
 ORDER BY d.dok_DataWyst DESC";
         }
