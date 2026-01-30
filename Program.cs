@@ -363,7 +363,7 @@ JOIN tw__Towar t ON p.ob_TowId = t.tw_Id
 WHERE 
     d.dok_Typ = 1
     AND t.tw_IdGrupa = 263
-    AND d.dok_DataWyst >= DATEADD(day, -3, GETDATE())
+    AND d.dok_DataWyst >= DATEADD(day, -4, GETDATE())
     AND NOT EXISTS ( 
         SELECT 1 
         FROM dok__Dokument rw 
