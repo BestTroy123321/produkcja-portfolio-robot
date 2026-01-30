@@ -625,33 +625,34 @@ ORDER BY d.dok_DataWyst DESC";
 
         private static int? PobierzTowarId(dynamic towar, string connectionString, string symbol)
         {
-            if (towar == null)
+            object towarObj = towar;
+            if (towarObj == null)
             {
                 return null;
             }
 
-            var towarId = PobierzWartoscInt(towar, "Id");
+            var towarId = PobierzWartoscInt(towarObj, "Id");
             if (towarId.HasValue)
             {
                 Console.WriteLine("Etap 2: RW: tw_Id z obiektu Towar.Id: " + towarId.Value);
                 return towarId;
             }
 
-            towarId = PobierzWartoscInt(towar, "Identyfikator");
+            towarId = PobierzWartoscInt(towarObj, "Identyfikator");
             if (towarId.HasValue)
             {
                 Console.WriteLine("Etap 2: RW: tw_Id z obiektu Towar.Identyfikator: " + towarId.Value);
                 return towarId;
             }
 
-            towarId = PobierzWartoscInt(towar, "TowarId");
+            towarId = PobierzWartoscInt(towarObj, "TowarId");
             if (towarId.HasValue)
             {
                 Console.WriteLine("Etap 2: RW: tw_Id z obiektu Towar.TowarId: " + towarId.Value);
                 return towarId;
             }
 
-            towarId = PobierzWartoscInt(towar, "IdTowaru");
+            towarId = PobierzWartoscInt(towarObj, "IdTowaru");
             if (towarId.HasValue)
             {
                 Console.WriteLine("Etap 2: RW: tw_Id z obiektu Towar.IdTowaru: " + towarId.Value);
@@ -954,7 +955,7 @@ ORDER BY d.dok_DataWyst DESC";
             }
         }
 
-        private static int? PobierzWartoscInt(dynamic obiekt, string nazwa)
+        private static int? PobierzWartoscInt(object obiekt, string nazwa)
         {
             try
             {
