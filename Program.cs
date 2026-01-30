@@ -8,6 +8,7 @@ using System.Text;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Reflection;
+using System.Globalization;
 using Newtonsoft.Json;
 
 namespace SubiektConnector
@@ -95,6 +96,48 @@ namespace SubiektConnector
 
         [JsonProperty("produkty")]
         public List<FzPozycjaPayload> Produkty { get; set; }
+    }
+
+    public class RwWebhookResponse
+    {
+        [JsonProperty("status")]
+        public string Status { get; set; }
+
+        [JsonProperty("context")]
+        public RwResponseContext Context { get; set; }
+
+        [JsonProperty("dane_do_rw")]
+        public RwDaneDoRw DaneDoRw { get; set; }
+    }
+
+    public class RwResponseContext
+    {
+        [JsonProperty("fz_id")]
+        public int? FzId { get; set; }
+
+        [JsonProperty("fz_numer")]
+        public string FzNumer { get; set; }
+    }
+
+    public class RwDaneDoRw
+    {
+        [JsonProperty("opis")]
+        public string Opis { get; set; }
+
+        [JsonProperty("pozycje")]
+        public List<RwPozycja> Pozycje { get; set; }
+    }
+
+    public class RwPozycja
+    {
+        [JsonProperty("symbol_surowca")]
+        public string SymbolSurowca { get; set; }
+
+        [JsonProperty("ilosc_laczna")]
+        public object IloscLaczna { get; set; }
+
+        [JsonProperty("jednostka")]
+        public string Jednostka { get; set; }
     }
 
     internal class Program
@@ -391,7 +434,6 @@ ORDER BY d.dok_DataWyst DESC";
             if (dokumenty.Count == 0)
             {
                 Console.WriteLine("Etap 2: Brak FZ do przetworzenia.");
-                UtworzDokumentRW(subiekt, connectionString);
                 return;
             }
 
@@ -403,17 +445,60 @@ ORDER BY d.dok_DataWyst DESC";
                 using (var httpClient = new HttpClient())
                 using (var content = new StringContent(payload, Encoding.UTF8, "application/json"))
                 {
-                    httpClient.PostAsync(fzWebhookUrl, content).GetAwaiter().GetResult();
+                    var response = httpClient.PostAsync(fzWebhookUrl, content).GetAwaiter().GetResult();
+                    var responseBody = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                    if (string.IsNullOrWhiteSpace(responseBody))
+                    {
+                        Console.WriteLine("Etap 2: Webhook nie zwrócił treści, pomijam tworzenie RW.");
+                        return;
+                    }
+
+                    List<RwWebhookResponse> odpowiedzRw;
+                    try
+                    {
+                        odpowiedzRw = JsonConvert.DeserializeObject<List<RwWebhookResponse>>(responseBody);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine("Etap 2: Błąd parsowania odpowiedzi webhooka: " + ex.Message);
+                        return;
+                    }
+
+                    if (odpowiedzRw == null || odpowiedzRw.Count == 0)
+                    {
+                        Console.WriteLine("Etap 2: Webhook nie zwrócił pozycji RW.");
+                        return;
+                    }
+
+                    foreach (var item in odpowiedzRw)
+                    {
+                        if (item == null)
+                        {
+                            continue;
+                        }
+                        if (!string.Equals(item.Status, "success", StringComparison.OrdinalIgnoreCase))
+                        {
+                            Console.WriteLine("Etap 2: RW: status != success, pomijam. FZ: " + item?.Context?.FzNumer);
+                            continue;
+                        }
+                        if (item.DaneDoRw == null || item.DaneDoRw.Pozycje == null || item.DaneDoRw.Pozycje.Count == 0)
+                        {
+                            Console.WriteLine("Etap 2: RW: brak danych do utworzenia RW. FZ: " + item?.Context?.FzNumer);
+                            continue;
+                        }
+
+                        Console.WriteLine("Etap 2: RW: Tworzenie RW dla FZ: " + item?.Context?.FzNumer);
+                        UtworzDokumentRW(subiekt, connectionString, item.DaneDoRw.Opis, item.DaneDoRw.Pozycje);
+                    }
                 }
             }
             catch (Exception ex)
             {
                 Console.WriteLine("Etap 2: Błąd podczas wysyłki webhooka: " + ex.Message);
             }
-            UtworzDokumentRW(subiekt, connectionString);
         }
 
-        private static void UtworzDokumentRW(dynamic subiekt, string connectionString)
+        private static void UtworzDokumentRW(dynamic subiekt, string connectionString, string opis, List<RwPozycja> pozycje)
         {
             try
             {
@@ -424,15 +509,11 @@ ORDER BY d.dok_DataWyst DESC";
                 }
 
                 Console.WriteLine("Etap 2: RW: Start");
-                var pozycjeDoDodania = new List<(string Symbol, decimal Ilosc)>
+                if (pozycje == null || pozycje.Count == 0)
                 {
-                    ("OP-1000-FI28-TRANS", 1m),
-                    ("OP-N-FI28-B", 1m),
-                    ("12574", 1m),
-                    ("M-13341", 4.21m),
-                    ("A-16718", 0.33m),
-                    ("S-17801", 5.001m)
-                };
+                    Console.WriteLine("Etap 2: RW: Brak pozycji do dodania");
+                    return;
+                }
 
                 Console.WriteLine("Etap 2: RW: Tworzenie dokumentu RW");
             dynamic dok = UtworzDokumentRwRoboczy(subiekt);
@@ -444,7 +525,7 @@ ORDER BY d.dok_DataWyst DESC";
                 Console.WriteLine("Etap 2: RW: Dokument RW utworzony w buforze");
                 try
                 {
-                    dok.Uwagi = "AUTO-RW: " + string.Join(", ", pozycjeDoDodania.ConvertAll(p => p.Symbol));
+                    dok.Uwagi = opis ?? string.Empty;
                     Console.WriteLine("Etap 2: RW: Ustawiono uwagi");
                 }
                 catch
@@ -452,13 +533,26 @@ ORDER BY d.dok_DataWyst DESC";
                     Console.WriteLine("Etap 2: RW: Nie udało się ustawić uwag");
                 }
 
-                foreach (var pozycja in pozycjeDoDodania)
+                foreach (var pozycja in pozycje)
                 {
-                    Console.WriteLine("Etap 2: RW: Dodawanie pozycji: " + pozycja.Symbol + " | " + pozycja.Ilosc);
-                    var towar = PobierzTowarPoSymbolu(subiekt, pozycja.Symbol);
+                    var symbol = pozycja?.SymbolSurowca;
+                    if (string.IsNullOrWhiteSpace(symbol))
+                    {
+                        Console.WriteLine("Etap 2: RW: Pominięto pozycję bez symbolu");
+                        continue;
+                    }
+
+                    if (!TryParseDecimal(pozycja?.IloscLaczna, out var ilosc))
+                    {
+                        Console.WriteLine("Etap 2: RW: Nieprawidłowa ilość dla: " + symbol);
+                        continue;
+                    }
+
+                    Console.WriteLine("Etap 2: RW: Dodawanie pozycji: " + symbol + " | " + ilosc);
+                    var towar = PobierzTowarPoSymbolu(subiekt, symbol);
                     if (towar == null)
                     {
-                        Console.WriteLine("Etap 2: RW: Towar nie znaleziony: " + pozycja.Symbol);
+                        Console.WriteLine("Etap 2: RW: Towar nie znaleziony: " + symbol);
                         continue;
                     }
 
@@ -467,12 +561,12 @@ ORDER BY d.dok_DataWyst DESC";
                     {
                         nazwaTowaru = PobierzWartoscString(towar, "NazwaPelna");
                     }
-                    Console.WriteLine("Etap 2: RW: Towar znaleziony: " + pozycja.Symbol + (string.IsNullOrWhiteSpace(nazwaTowaru) ? "" : " | " + nazwaTowaru));
+                    Console.WriteLine("Etap 2: RW: Towar znaleziony: " + symbol + (string.IsNullOrWhiteSpace(nazwaTowaru) ? "" : " | " + nazwaTowaru));
 
-                    int? towarId = PobierzTowarId((object)towar, connectionString, pozycja.Symbol);
+                    int? towarId = PobierzTowarId((object)towar, connectionString, symbol);
                     if (!towarId.HasValue)
                     {
-                        Console.WriteLine("Etap 2: RW: Nie udało się ustalić tw_Id dla: " + pozycja.Symbol);
+                        Console.WriteLine("Etap 2: RW: Nie udało się ustalić tw_Id dla: " + symbol);
                         continue;
                     }
                     Console.WriteLine("Etap 2: RW: Ustalono tw_Id: " + towarId.Value);
@@ -480,19 +574,19 @@ ORDER BY d.dok_DataWyst DESC";
                     dynamic poz = DodajPozycjeRw(dok, towarId.Value);
                     if (poz == null)
                     {
-                        Console.WriteLine("Etap 2: RW: Nie udało się dodać pozycji: " + pozycja.Symbol);
+                        Console.WriteLine("Etap 2: RW: Nie udało się dodać pozycji: " + symbol);
                         continue;
                     }
-                    Console.WriteLine("Etap 2: RW: Pozycja dodana: " + pozycja.Symbol);
+                    Console.WriteLine("Etap 2: RW: Pozycja dodana: " + symbol);
 
                     try
                     {
-                        poz.IloscJm = pozycja.Ilosc;
-                        Console.WriteLine("Etap 2: RW: Ustawiono IloscJm: " + pozycja.Ilosc);
+                        poz.IloscJm = ilosc;
+                        Console.WriteLine("Etap 2: RW: Ustawiono IloscJm: " + ilosc);
                     }
                     catch
                     {
-                        Console.WriteLine("Etap 2: RW: Nie udało się ustawić IloscJm dla: " + pozycja.Symbol);
+                        Console.WriteLine("Etap 2: RW: Nie udało się ustawić IloscJm dla: " + symbol);
                     }
                 }
                 Console.WriteLine("Etap 2: RW: Zapis dokumentu");
@@ -969,6 +1063,57 @@ ORDER BY d.dok_DataWyst DESC";
             {
                 return null;
             }
+        }
+
+        private static bool TryParseDecimal(object value, out decimal result)
+        {
+            result = 0m;
+            if (value == null)
+            {
+                return false;
+            }
+
+            if (value is decimal decimalValue)
+            {
+                result = decimalValue;
+                return true;
+            }
+
+            if (value is double doubleValue)
+            {
+                result = Convert.ToDecimal(doubleValue);
+                return true;
+            }
+
+            if (value is float floatValue)
+            {
+                result = Convert.ToDecimal(floatValue);
+                return true;
+            }
+
+            var text = value.ToString();
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return false;
+            }
+
+            if (decimal.TryParse(text, NumberStyles.Any, CultureInfo.InvariantCulture, out result))
+            {
+                return true;
+            }
+
+            var normalized = text.Replace(",", ".");
+            if (decimal.TryParse(normalized, NumberStyles.Any, CultureInfo.InvariantCulture, out result))
+            {
+                return true;
+            }
+
+            if (decimal.TryParse(text, NumberStyles.Any, new CultureInfo("pl-PL"), out result))
+            {
+                return true;
+            }
+
+            return false;
         }
 
         private static bool CzyPoprawnaOdpowiedzWebhooka(string jsonResponse)
