@@ -423,32 +423,16 @@ ORDER BY d.dok_DataWyst DESC";
                     return;
                 }
 
-                const string symbol = "OP-L-15-TRANSP";
                 Console.WriteLine("Etap 2: RW: Start");
-                Console.WriteLine("Etap 2: RW: Szukam towaru po symbolu: " + symbol);
-
-                var towar = PobierzTowarPoSymbolu(subiekt, symbol);
-                if (towar == null)
+                var pozycjeDoDodania = new List<(string Symbol, decimal Ilosc)>
                 {
-                    Console.WriteLine("Etap 2: RW: Towar nie znaleziony: " + symbol);
-                }
-                else
-                {
-                    var nazwaTowaru = PobierzWartoscString(towar, "Nazwa");
-                    if (string.IsNullOrWhiteSpace(nazwaTowaru))
-                    {
-                        nazwaTowaru = PobierzWartoscString(towar, "NazwaPelna");
-                    }
-                    Console.WriteLine("Etap 2: RW: Towar znaleziony: " + symbol + (string.IsNullOrWhiteSpace(nazwaTowaru) ? "" : " | " + nazwaTowaru));
-                }
-
-                int? towarId = PobierzTowarId((object)towar, connectionString, symbol);
-                if (!towarId.HasValue)
-                {
-                    Console.WriteLine("Etap 2: RW: Nie udało się ustalić tw_Id dla: " + symbol);
-                    return;
-                }
-                Console.WriteLine("Etap 2: RW: Ustalono tw_Id: " + towarId.Value);
+                    ("OP-1000-FI28-TRANS", 1m),
+                    ("OP-N-FI28-B", 1m),
+                    ("12574", 1m),
+                    ("M-13341", 4.21m),
+                    ("A-16718", 0.33m),
+                    ("S-17801", 5.001m)
+                };
 
                 Console.WriteLine("Etap 2: RW: Tworzenie dokumentu RW");
             dynamic dok = UtworzDokumentRwRoboczy(subiekt);
@@ -460,68 +444,56 @@ ORDER BY d.dok_DataWyst DESC";
                 Console.WriteLine("Etap 2: RW: Dokument RW utworzony w buforze");
                 try
                 {
-                    dok.Uwagi = "AUTO-RW: OP-L-15-TRANSP";
+                    dok.Uwagi = "AUTO-RW: " + string.Join(", ", pozycjeDoDodania.ConvertAll(p => p.Symbol));
                     Console.WriteLine("Etap 2: RW: Ustawiono uwagi");
                 }
                 catch
                 {
                     Console.WriteLine("Etap 2: RW: Nie udało się ustawić uwag");
                 }
-                Console.WriteLine("Etap 2: RW: Dodawanie pozycji");
-                dynamic poz = DodajPozycjeRw(dok, towarId.Value);
-                if (poz == null)
+
+                foreach (var pozycja in pozycjeDoDodania)
                 {
-                    Console.WriteLine("Etap 2: RW: Nie udało się dodać pozycji");
-                    return;
-                }
-                Console.WriteLine("Etap 2: RW: Pozycja dodana");
-                try
-                {
-                    poz.TowarSymbol = symbol;
-                    Console.WriteLine("Etap 2: RW: Ustawiono TowarSymbol");
-                }
-                catch
-                {
-                    Console.WriteLine("Etap 2: RW: Nie udało się ustawić TowarSymbol");
-                }
-                try
-                {
-                    if (towar != null)
+                    Console.WriteLine("Etap 2: RW: Dodawanie pozycji: " + pozycja.Symbol + " | " + pozycja.Ilosc);
+                    var towar = PobierzTowarPoSymbolu(subiekt, pozycja.Symbol);
+                    if (towar == null)
                     {
-                        try
-                        {
-                            poz.Towar = towar;
-                            Console.WriteLine("Etap 2: RW: Ustawiono Towar na pozycji");
-                        }
-                        catch
-                        {
-                            Console.WriteLine("Etap 2: RW: Nie udało się ustawić Towar na pozycji");
-                        }
+                        Console.WriteLine("Etap 2: RW: Towar nie znaleziony: " + pozycja.Symbol);
+                        continue;
                     }
+
+                    var nazwaTowaru = PobierzWartoscString(towar, "Nazwa");
+                    if (string.IsNullOrWhiteSpace(nazwaTowaru))
+                    {
+                        nazwaTowaru = PobierzWartoscString(towar, "NazwaPelna");
+                    }
+                    Console.WriteLine("Etap 2: RW: Towar znaleziony: " + pozycja.Symbol + (string.IsNullOrWhiteSpace(nazwaTowaru) ? "" : " | " + nazwaTowaru));
+
+                    int? towarId = PobierzTowarId((object)towar, connectionString, pozycja.Symbol);
+                    if (!towarId.HasValue)
+                    {
+                        Console.WriteLine("Etap 2: RW: Nie udało się ustalić tw_Id dla: " + pozycja.Symbol);
+                        continue;
+                    }
+                    Console.WriteLine("Etap 2: RW: Ustalono tw_Id: " + towarId.Value);
+
+                    dynamic poz = DodajPozycjeRw(dok, towarId.Value);
+                    if (poz == null)
+                    {
+                        Console.WriteLine("Etap 2: RW: Nie udało się dodać pozycji: " + pozycja.Symbol);
+                        continue;
+                    }
+                    Console.WriteLine("Etap 2: RW: Pozycja dodana: " + pozycja.Symbol);
 
                     try
                     {
-                        poz.IloscJm = 1m;
-                        Console.WriteLine("Etap 2: RW: Ustawiono IloscJm: 1");
+                        poz.IloscJm = pozycja.Ilosc;
+                        Console.WriteLine("Etap 2: RW: Ustawiono IloscJm: " + pozycja.Ilosc);
                     }
                     catch
                     {
-                        Console.WriteLine("Etap 2: RW: Nie udało się ustawić IloscJm");
+                        Console.WriteLine("Etap 2: RW: Nie udało się ustawić IloscJm dla: " + pozycja.Symbol);
                     }
-
-                    try
-                    {
-                        poz.Ilosc = 1m;
-                        Console.WriteLine("Etap 2: RW: Ustawiono Ilosc: 1");
-                    }
-                    catch
-                    {
-                        Console.WriteLine("Etap 2: RW: Nie udało się ustawić Ilosc");
-                    }
-                }
-                catch
-                {
-                    Console.WriteLine("Etap 2: RW: Nie udało się ustawić ilości");
                 }
                 Console.WriteLine("Etap 2: RW: Zapis dokumentu");
                 dok.Zapisz();
