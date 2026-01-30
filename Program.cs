@@ -940,7 +940,12 @@ ORDER BY d.dok_DataWyst DESC";
         {
             try
             {
-                var value = obiekt.GetType().InvokeMember(nazwa, BindingFlags.GetProperty, null, obiekt, null);
+                object obj = obiekt;
+                if (obj == null)
+                {
+                    return null;
+                }
+                var value = obj.GetType().InvokeMember(nazwa, BindingFlags.GetProperty, null, obj, null);
                 return value != null ? value.ToString() : null;
             }
             catch
@@ -953,7 +958,12 @@ ORDER BY d.dok_DataWyst DESC";
         {
             try
             {
-                var value = obiekt.GetType().InvokeMember(nazwa, BindingFlags.GetProperty, null, obiekt, null);
+                object obj = obiekt;
+                if (obj == null)
+                {
+                    return null;
+                }
+                var value = obj.GetType().InvokeMember(nazwa, BindingFlags.GetProperty, null, obj, null);
                 if (value == null)
                 {
                     return null;
@@ -975,7 +985,12 @@ ORDER BY d.dok_DataWyst DESC";
         {
             try
             {
-                return obiekt.GetType().InvokeMember(nazwa, BindingFlags.GetProperty, null, obiekt, null);
+                object obj = obiekt;
+                if (obj == null)
+                {
+                    return null;
+                }
+                return obj.GetType().InvokeMember(nazwa, BindingFlags.GetProperty, null, obj, null);
             }
             catch
             {
