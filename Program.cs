@@ -417,38 +417,134 @@ ORDER BY d.dok_DataWyst DESC";
         {
             try
             {
-                Console.WriteLine("Etap 2: Tworzenie dokumentu RW z pozycją OP-L-15-TRANSP x1");
+                if (subiekt == null)
+                {
+                    Console.WriteLine("Etap 2: RW: Brak połączenia z Subiektem GT");
+                    return;
+                }
+
+                const string symbol = "OP-L-15-TRANSP";
+                Console.WriteLine("Etap 2: RW: Start");
+                Console.WriteLine("Etap 2: RW: Szukam towaru po symbolu: " + symbol);
+
+                var towar = PobierzTowarPoSymbolu(subiekt, symbol);
+                if (towar == null)
+                {
+                    Console.WriteLine("Etap 2: RW: Towar nie znaleziony: " + symbol);
+                }
+                else
+                {
+                    var nazwaTowaru = PobierzWartoscString(towar, "Nazwa");
+                    if (string.IsNullOrWhiteSpace(nazwaTowaru))
+                    {
+                        nazwaTowaru = PobierzWartoscString(towar, "NazwaPelna");
+                    }
+                    Console.WriteLine("Etap 2: RW: Towar znaleziony: " + symbol + (string.IsNullOrWhiteSpace(nazwaTowaru) ? "" : " | " + nazwaTowaru));
+                }
+
+                Console.WriteLine("Etap 2: RW: Tworzenie dokumentu RW");
                 dynamic dok = subiekt.Dokumenty.Dodaj(13);
+                Console.WriteLine("Etap 2: RW: Dokument RW utworzony w buforze");
                 try
                 {
                     dok.Uwagi = "AUTO-RW: OP-L-15-TRANSP";
+                    Console.WriteLine("Etap 2: RW: Ustawiono uwagi");
                 }
                 catch
                 {
+                    Console.WriteLine("Etap 2: RW: Nie udało się ustawić uwag");
                 }
+                Console.WriteLine("Etap 2: RW: Dodawanie pozycji");
                 dynamic poz = dok.Pozycje.Dodaj();
+                Console.WriteLine("Etap 2: RW: Pozycja dodana");
                 try
                 {
-                    poz.TowarSymbol = "OP-L-15-TRANSP";
+                    poz.TowarSymbol = symbol;
+                    Console.WriteLine("Etap 2: RW: Ustawiono TowarSymbol");
                 }
                 catch
                 {
+                    Console.WriteLine("Etap 2: RW: Nie udało się ustawić TowarSymbol");
                 }
                 try
                 {
+                    if (towar != null)
+                    {
+                        try
+                        {
+                            poz.Towar = towar;
+                            Console.WriteLine("Etap 2: RW: Ustawiono Towar na pozycji");
+                        }
+                        catch
+                        {
+                            Console.WriteLine("Etap 2: RW: Nie udało się ustawić Towar na pozycji");
+                        }
+                    }
+
                     poz.Ilosc = 1m;
+                    Console.WriteLine("Etap 2: RW: Ustawiono ilość: 1");
                 }
                 catch
                 {
+                    Console.WriteLine("Etap 2: RW: Nie udało się ustawić ilości");
                 }
+                Console.WriteLine("Etap 2: RW: Zapis dokumentu");
                 dok.Zapisz();
+                Console.WriteLine("Etap 2: RW: Zapis OK");
                 dok.Zamknij();
-                Console.WriteLine("Etap 2: Dokument RW utworzony");
+                Console.WriteLine("Etap 2: RW: Dokument zamknięty");
             }
             catch (Exception ex)
             {
-                Console.WriteLine("Etap 2: Błąd tworzenia RW: " + ex.Message);
+                Console.WriteLine("Etap 2: Błąd tworzenia RW: " + ex.ToString());
             }
+        }
+
+        private static dynamic PobierzTowarPoSymbolu(dynamic subiekt, string symbol)
+        {
+            try
+            {
+                var towary = PobierzWartoscObject(subiekt, "Towary");
+                if (towary == null)
+                {
+                    Console.WriteLine("Etap 2: RW: Nie można pobrać kolekcji Towary");
+                    return null;
+                }
+
+                try
+                {
+                    var towar = towary.GetType().InvokeMember("Wczytaj", BindingFlags.InvokeMethod, null, towary, new object[] { symbol });
+                    if (towar != null)
+                    {
+                        Console.WriteLine("Etap 2: RW: Wczytaj(symbol) zwrócił towar");
+                        return towar;
+                    }
+                }
+                catch
+                {
+                    Console.WriteLine("Etap 2: RW: Wczytaj(symbol) nie powiodło się");
+                }
+
+                try
+                {
+                    var towar = towary.GetType().InvokeMember("WczytajPoSymbolu", BindingFlags.InvokeMethod, null, towary, new object[] { symbol });
+                    if (towar != null)
+                    {
+                        Console.WriteLine("Etap 2: RW: WczytajPoSymbolu(symbol) zwrócił towar");
+                        return towar;
+                    }
+                }
+                catch
+                {
+                    Console.WriteLine("Etap 2: RW: WczytajPoSymbolu(symbol) nie powiodło się");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Etap 2: RW: Błąd pobierania towaru: " + ex.Message);
+            }
+
+            return null;
         }
         private static dynamic ZalogujSubiektGT()
         {
