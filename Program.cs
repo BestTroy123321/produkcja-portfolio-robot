@@ -443,7 +443,12 @@ ORDER BY d.dok_DataWyst DESC";
                 }
 
                 Console.WriteLine("Etap 2: RW: Tworzenie dokumentu RW");
-                dynamic dok = subiekt.Dokumenty.Dodaj(13);
+            dynamic dok = UtworzDokumentRwRoboczy(subiekt);
+            if (dok == null)
+            {
+                Console.WriteLine("Etap 2: RW: Nie udało się utworzyć dokumentu RW");
+                return;
+            }
                 Console.WriteLine("Etap 2: RW: Dokument RW utworzony w buforze");
                 try
                 {
@@ -498,6 +503,106 @@ ORDER BY d.dok_DataWyst DESC";
             {
                 Console.WriteLine("Etap 2: Błąd tworzenia RW: " + ex.ToString());
             }
+        }
+
+        private static dynamic UtworzDokumentRwRoboczy(dynamic subiekt)
+        {
+            dynamic dokumenty = null;
+            try
+            {
+                dokumenty = PobierzWartoscObject(subiekt, "Dokumenty");
+            }
+            catch
+            {
+                dokumenty = null;
+            }
+
+            if (dokumenty == null)
+            {
+                try
+                {
+                    dokumenty = subiekt.Dokumenty;
+                }
+                catch
+                {
+                    Console.WriteLine("Etap 2: RW: Nie można pobrać kolekcji Dokumenty");
+                    return null;
+                }
+            }
+
+            dynamic dok = null;
+
+            try
+            {
+                Console.WriteLine("Etap 2: RW: Próba utworzenia RW: Dodaj(13)");
+                dok = dokumenty.Dodaj(13);
+                Console.WriteLine("Etap 2: RW: Dodaj(13) OK");
+                return dok;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Etap 2: RW: Dodaj(13) niepowodzenie: " + ex.Message);
+            }
+
+            try
+            {
+                Console.WriteLine("Etap 2: RW: Próba utworzenia RW: Dodaj(\"RW\")");
+                dok = dokumenty.Dodaj("RW");
+                Console.WriteLine("Etap 2: RW: Dodaj(\"RW\") OK");
+                return dok;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Etap 2: RW: Dodaj(\"RW\") niepowodzenie: " + ex.Message);
+            }
+
+            dynamic typy = null;
+            try
+            {
+                typy = PobierzWartoscObject(dokumenty, "Typy");
+            }
+            catch
+            {
+                typy = null;
+            }
+
+            if (typy != null)
+            {
+                var typRw = PobierzWartoscObject(typy, "RW");
+                if (typRw == null)
+                {
+                    typRw = PobierzWartoscObject(typy, "RozchodWewnetrzny");
+                }
+                if (typRw == null)
+                {
+                    typRw = PobierzWartoscObject(typy, "RozchodWewn");
+                }
+
+                if (typRw != null)
+                {
+                    try
+                    {
+                        Console.WriteLine("Etap 2: RW: Próba utworzenia RW: Dodaj(typy.RW)");
+                        dok = dokumenty.Dodaj(typRw);
+                        Console.WriteLine("Etap 2: RW: Dodaj(typy.RW) OK");
+                        return dok;
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine("Etap 2: RW: Dodaj(typy.RW) niepowodzenie: " + ex.Message);
+                    }
+                }
+                else
+                {
+                    Console.WriteLine("Etap 2: RW: Nie znaleziono typu RW w Typy");
+                }
+            }
+            else
+            {
+                Console.WriteLine("Etap 2: RW: Nie udało się pobrać Typy");
+            }
+
+            return null;
         }
 
         private static dynamic PobierzTowarPoSymbolu(dynamic subiekt, string symbol)
