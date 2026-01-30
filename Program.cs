@@ -480,7 +480,7 @@ ORDER BY d.dok_DataWyst DESC";
                     if (string.IsNullOrWhiteSpace(responseBody))
                     {
                         Console.WriteLine("Etap 2: Webhook nie zwrócił treści, pomijam tworzenie RW.");
-                        _logger.AddLog("ERROR", "Etap 2: Webhook nie zwrócił treści");
+                        _logger.AddLog("INFO", "Etap 2: Webhook nie zwrócił treści");
                         return;
                     }
 
