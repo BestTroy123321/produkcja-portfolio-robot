@@ -433,11 +433,12 @@ ORDER BY d.dok_DataWyst DESC";
 
             if (dokumenty.Count == 0)
             {
-                Console.WriteLine("Etap 2: Brak FZ do przetworzenia.");
-                return;
+                Console.WriteLine("Etap 2: Brak FZ do przetworzenia, wysyłam pustą listę do webhooka.");
             }
-
-            Console.WriteLine("Etap 2: Znaleziono " + dokumenty.Count + " FZ z " + liczbaPozycji + " produktami.");
+            else
+            {
+                Console.WriteLine("Etap 2: Znaleziono " + dokumenty.Count + " FZ z " + liczbaPozycji + " produktami.");
+            }
 
             var payload = JsonConvert.SerializeObject(new List<FzPayload>(dokumenty.Values));
             try
@@ -445,8 +446,12 @@ ORDER BY d.dok_DataWyst DESC";
                 using (var httpClient = new HttpClient())
                 using (var content = new StringContent(payload, Encoding.UTF8, "application/json"))
                 {
+                    Console.WriteLine("Etap 2: Webhook URL: " + fzWebhookUrl);
+                    Console.WriteLine("Etap 2: Wysyłanie do webhooka, rozmiar payloadu: " + payload.Length);
                     var response = httpClient.PostAsync(fzWebhookUrl, content).GetAwaiter().GetResult();
                     var responseBody = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                    Console.WriteLine("Etap 2: Odpowiedź webhooka: " + (int)response.StatusCode + " " + response.ReasonPhrase);
+                    Console.WriteLine("Etap 2: Rozmiar odpowiedzi: " + (responseBody == null ? 0 : responseBody.Length));
                     if (string.IsNullOrWhiteSpace(responseBody))
                     {
                         Console.WriteLine("Etap 2: Webhook nie zwrócił treści, pomijam tworzenie RW.");
