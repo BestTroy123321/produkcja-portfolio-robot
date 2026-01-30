@@ -442,7 +442,7 @@ ORDER BY d.dok_DataWyst DESC";
                     Console.WriteLine("Etap 2: RW: Towar znaleziony: " + symbol + (string.IsNullOrWhiteSpace(nazwaTowaru) ? "" : " | " + nazwaTowaru));
                 }
 
-                var towarId = PobierzTowarId(towar, connectionString, symbol);
+                int? towarId = PobierzTowarId((object)towar, connectionString, symbol);
                 if (!towarId.HasValue)
                 {
                     Console.WriteLine("Etap 2: RW: Nie udało się ustalić tw_Id dla: " + symbol);
@@ -623,7 +623,7 @@ ORDER BY d.dok_DataWyst DESC";
             return null;
         }
 
-        private static int? PobierzTowarId(dynamic towar, string connectionString, string symbol)
+        private static int? PobierzTowarId(object towar, string connectionString, string symbol)
         {
             object towarObj = towar;
             if (towarObj == null)
