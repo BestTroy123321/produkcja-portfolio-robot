@@ -391,7 +391,7 @@ ORDER BY d.dok_DataWyst DESC";
             if (dokumenty.Count == 0)
             {
                 Console.WriteLine("Etap 2: Brak FZ do przetworzenia.");
-                UtworzDokumentRW(subiekt);
+                UtworzDokumentRW(subiekt, connectionString);
                 return;
             }
 
@@ -410,10 +410,10 @@ ORDER BY d.dok_DataWyst DESC";
             {
                 Console.WriteLine("Etap 2: Błąd podczas wysyłki webhooka: " + ex.Message);
             }
-            UtworzDokumentRW(subiekt);
+            UtworzDokumentRW(subiekt, connectionString);
         }
 
-        private static void UtworzDokumentRW(dynamic subiekt)
+        private static void UtworzDokumentRW(dynamic subiekt, string connectionString)
         {
             try
             {
@@ -442,6 +442,14 @@ ORDER BY d.dok_DataWyst DESC";
                     Console.WriteLine("Etap 2: RW: Towar znaleziony: " + symbol + (string.IsNullOrWhiteSpace(nazwaTowaru) ? "" : " | " + nazwaTowaru));
                 }
 
+                var towarId = PobierzTowarId(towar, connectionString, symbol);
+                if (!towarId.HasValue)
+                {
+                    Console.WriteLine("Etap 2: RW: Nie udało się ustalić tw_Id dla: " + symbol);
+                    return;
+                }
+                Console.WriteLine("Etap 2: RW: Ustalono tw_Id: " + towarId.Value);
+
                 Console.WriteLine("Etap 2: RW: Tworzenie dokumentu RW");
             dynamic dok = UtworzDokumentRwRoboczy(subiekt);
             if (dok == null)
@@ -460,7 +468,12 @@ ORDER BY d.dok_DataWyst DESC";
                     Console.WriteLine("Etap 2: RW: Nie udało się ustawić uwag");
                 }
                 Console.WriteLine("Etap 2: RW: Dodawanie pozycji");
-                dynamic poz = dok.Pozycje.Dodaj();
+                dynamic poz = DodajPozycjeRw(dok, towarId.Value);
+                if (poz == null)
+                {
+                    Console.WriteLine("Etap 2: RW: Nie udało się dodać pozycji");
+                    return;
+                }
                 Console.WriteLine("Etap 2: RW: Pozycja dodana");
                 try
                 {
@@ -486,8 +499,25 @@ ORDER BY d.dok_DataWyst DESC";
                         }
                     }
 
-                    poz.Ilosc = 1m;
-                    Console.WriteLine("Etap 2: RW: Ustawiono ilość: 1");
+                    try
+                    {
+                        poz.IloscJm = 1m;
+                        Console.WriteLine("Etap 2: RW: Ustawiono IloscJm: 1");
+                    }
+                    catch
+                    {
+                        Console.WriteLine("Etap 2: RW: Nie udało się ustawić IloscJm");
+                    }
+
+                    try
+                    {
+                        poz.Ilosc = 1m;
+                        Console.WriteLine("Etap 2: RW: Ustawiono Ilosc: 1");
+                    }
+                    catch
+                    {
+                        Console.WriteLine("Etap 2: RW: Nie udało się ustawić Ilosc");
+                    }
                 }
                 catch
                 {
@@ -588,6 +618,105 @@ ORDER BY d.dok_DataWyst DESC";
             catch (Exception ex)
             {
                 Console.WriteLine("Etap 2: RW: Błąd pobierania towaru: " + ex.Message);
+            }
+
+            return null;
+        }
+
+        private static int? PobierzTowarId(dynamic towar, string connectionString, string symbol)
+        {
+            var towarId = PobierzWartoscInt(towar, "Id");
+            if (towarId.HasValue)
+            {
+                Console.WriteLine("Etap 2: RW: tw_Id z obiektu Towar.Id: " + towarId.Value);
+                return towarId;
+            }
+
+            towarId = PobierzWartoscInt(towar, "Identyfikator");
+            if (towarId.HasValue)
+            {
+                Console.WriteLine("Etap 2: RW: tw_Id z obiektu Towar.Identyfikator: " + towarId.Value);
+                return towarId;
+            }
+
+            towarId = PobierzWartoscInt(towar, "TowarId");
+            if (towarId.HasValue)
+            {
+                Console.WriteLine("Etap 2: RW: tw_Id z obiektu Towar.TowarId: " + towarId.Value);
+                return towarId;
+            }
+
+            towarId = PobierzWartoscInt(towar, "IdTowaru");
+            if (towarId.HasValue)
+            {
+                Console.WriteLine("Etap 2: RW: tw_Id z obiektu Towar.IdTowaru: " + towarId.Value);
+                return towarId;
+            }
+
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                Console.WriteLine("Etap 2: RW: Brak connection stringa do pobrania tw_Id");
+                return null;
+            }
+
+            try
+            {
+                using (var connection = new SqlConnection(connectionString))
+                using (var command = new SqlCommand("SELECT TOP 1 tw_Id FROM tw__Towar WHERE tw_Symbol = @symbol", connection))
+                {
+                    command.Parameters.AddWithValue("@symbol", symbol);
+                    connection.Open();
+                    var result = command.ExecuteScalar();
+                    if (result != null && int.TryParse(result.ToString(), out var id))
+                    {
+                        Console.WriteLine("Etap 2: RW: tw_Id z bazy: " + id);
+                        return id;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Etap 2: RW: Błąd pobierania tw_Id z bazy: " + ex.Message);
+            }
+
+            return null;
+        }
+
+        private static dynamic DodajPozycjeRw(dynamic dokument, int towarId)
+        {
+            dynamic pozycje = null;
+            try
+            {
+                pozycje = PobierzWartoscObject(dokument, "Pozycje");
+            }
+            catch
+            {
+                pozycje = null;
+            }
+
+            if (pozycje == null)
+            {
+                try
+                {
+                    pozycje = dokument.Pozycje;
+                }
+                catch
+                {
+                    Console.WriteLine("Etap 2: RW: Nie można pobrać kolekcji Pozycje");
+                    return null;
+                }
+            }
+
+            try
+            {
+                Console.WriteLine("Etap 2: RW: Próba dodania pozycji: Dodaj(tw_Id)");
+                var poz = pozycje.GetType().InvokeMember("Dodaj", BindingFlags.InvokeMethod, null, pozycje, new object[] { towarId });
+                Console.WriteLine("Etap 2: RW: Dodaj(tw_Id) OK");
+                return poz;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Etap 2: RW: Dodaj(tw_Id) niepowodzenie: " + ex.Message);
             }
 
             return null;
@@ -808,6 +937,28 @@ ORDER BY d.dok_DataWyst DESC";
             {
                 var value = obiekt.GetType().InvokeMember(nazwa, BindingFlags.GetProperty, null, obiekt, null);
                 return value != null ? value.ToString() : null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static int? PobierzWartoscInt(dynamic obiekt, string nazwa)
+        {
+            try
+            {
+                var value = obiekt.GetType().InvokeMember(nazwa, BindingFlags.GetProperty, null, obiekt, null);
+                if (value == null)
+                {
+                    return null;
+                }
+                int result;
+                if (int.TryParse(value.ToString(), out result))
+                {
+                    return result;
+                }
+                return null;
             }
             catch
             {
