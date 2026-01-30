@@ -140,6 +140,21 @@ namespace SubiektConnector
         public string Jednostka { get; set; }
     }
 
+    public class RwCreateResult
+    {
+        public bool Success { get; set; }
+        public bool IsFatal { get; set; }
+        public List<string> Errors { get; set; }
+        public string ExceptionDetails { get; set; }
+    }
+
+    public class FatalSubiektException : Exception
+    {
+        public FatalSubiektException(string message) : base(message)
+        {
+        }
+    }
+
     internal class Program
     {
         private static LoggerService _logger;
@@ -375,10 +390,12 @@ ORDER BY d.dok_DataWyst DESC";
 
         private static void ExecuteFzWebhook(string connectionString, dynamic subiekt)
         {
+            _logger.AddLog("INFO", "Etap 2: rozpoczęto tworzenie RW na podstawie FZ");
             var fzWebhookUrl = ConfigurationManager.AppSettings["FzWebhookUrl"];
             if (string.IsNullOrWhiteSpace(fzWebhookUrl))
             {
                 Console.WriteLine("Etap 2: Brak ustawienia appSettings: FzWebhookUrl");
+                _logger.AddLog("ERROR", "Etap 2: Brak ustawienia appSettings: FzWebhookUrl", new { stackTrace = Environment.StackTrace });
                 return;
             }
 
@@ -428,6 +445,7 @@ ORDER BY d.dok_DataWyst DESC";
             catch (Exception ex)
             {
                 Console.WriteLine("Etap 2: Błąd podczas pobierania FZ: " + ex.Message);
+                _logger.AddLog("ERROR", "Etap 2: Błąd podczas pobierania FZ", new { stackTrace = ex.ToString() });
                 return;
             }
 
@@ -439,6 +457,7 @@ ORDER BY d.dok_DataWyst DESC";
             {
                 Console.WriteLine("Etap 2: Znaleziono " + dokumenty.Count + " FZ z " + liczbaPozycji + " produktami.");
             }
+            _logger.AddLog("SUCCESS", "Etap 2: Pobrano " + liczbaPozycji + " pozycji z " + dokumenty.Count + " dokumentów", new { liczbaPozycji, liczbaDokumentow = dokumenty.Count });
 
             var payload = JsonConvert.SerializeObject(new List<FzPayload>(dokumenty.Values));
             try
@@ -452,9 +471,16 @@ ORDER BY d.dok_DataWyst DESC";
                     var responseBody = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
                     Console.WriteLine("Etap 2: Odpowiedź webhooka: " + (int)response.StatusCode + " " + response.ReasonPhrase);
                     Console.WriteLine("Etap 2: Rozmiar odpowiedzi: " + (responseBody == null ? 0 : responseBody.Length));
+                    if (response.StatusCode != HttpStatusCode.OK)
+                    {
+                        Console.WriteLine("Etap 2: Webhook zwrócił błędny status, pomijam tworzenie RW.");
+                        _logger.AddLog("ERROR", "Etap 2: Webhook zwrócił błędny status", new { status = (int)response.StatusCode, responseBody });
+                        return;
+                    }
                     if (string.IsNullOrWhiteSpace(responseBody))
                     {
                         Console.WriteLine("Etap 2: Webhook nie zwrócił treści, pomijam tworzenie RW.");
+                        _logger.AddLog("ERROR", "Etap 2: Webhook nie zwrócił treści");
                         return;
                     }
 
@@ -466,15 +492,19 @@ ORDER BY d.dok_DataWyst DESC";
                     catch (Exception ex)
                     {
                         Console.WriteLine("Etap 2: Błąd parsowania odpowiedzi webhooka: " + ex.Message);
+                        _logger.AddLog("ERROR", "Etap 2: Błąd parsowania odpowiedzi webhooka", new { stackTrace = ex.ToString(), responseBody });
                         return;
                     }
 
                     if (odpowiedzRw == null || odpowiedzRw.Count == 0)
                     {
                         Console.WriteLine("Etap 2: Webhook nie zwrócił pozycji RW.");
+                        _logger.AddLog("ERROR", "Etap 2: Webhook nie zwrócił pozycji RW", new { responseBody });
                         return;
                     }
 
+                    var liczbaRw = 0;
+                    var liczbaPozycjiRw = 0;
                     foreach (var item in odpowiedzRw)
                     {
                         if (item == null)
@@ -484,49 +514,89 @@ ORDER BY d.dok_DataWyst DESC";
                         if (!string.Equals(item.Status, "success", StringComparison.OrdinalIgnoreCase))
                         {
                             Console.WriteLine("Etap 2: RW: status != success, pomijam. FZ: " + item?.Context?.FzNumer);
+                            _logger.AddLog("ERROR", "Etap 2: RW: status != success", new { fzNumer = item?.Context?.FzNumer, status = item?.Status });
                             continue;
                         }
                         if (item.DaneDoRw == null || item.DaneDoRw.Pozycje == null || item.DaneDoRw.Pozycje.Count == 0)
                         {
                             Console.WriteLine("Etap 2: RW: brak danych do utworzenia RW. FZ: " + item?.Context?.FzNumer);
+                            _logger.AddLog("ERROR", "Etap 2: RW: brak danych do utworzenia RW", new { fzNumer = item?.Context?.FzNumer });
                             continue;
                         }
 
                         Console.WriteLine("Etap 2: RW: Tworzenie RW dla FZ: " + item?.Context?.FzNumer);
-                        UtworzDokumentRW(subiekt, connectionString, item.DaneDoRw.Opis, item.DaneDoRw.Pozycje);
+                        var result = UtworzDokumentRW(subiekt, connectionString, item.DaneDoRw.Opis, item.DaneDoRw.Pozycje);
+                        if (result == null)
+                        {
+                            _logger.AddLog("ERROR", "Etap 2: RW: błąd dla FZ", new { fzNumer = item?.Context?.FzNumer, errors = new[] { "Nieznany błąd tworzenia RW" } });
+                            continue;
+                        }
+                        if (result.IsFatal)
+                        {
+                            _logger.AddLog("ERROR", "Etap 2: błąd krytyczny podczas tworzenia RW", new { fzNumer = item?.Context?.FzNumer, errors = result.Errors, exception = result.ExceptionDetails });
+                            throw new FatalSubiektException("Etap 2: błąd krytyczny podczas tworzenia RW");
+                        }
+                        if (!result.Success)
+                        {
+                            _logger.AddLog("ERROR", "Etap 2: RW: błąd dla FZ", new { fzNumer = item?.Context?.FzNumer, errors = result.Errors, exception = result.ExceptionDetails });
+                            Console.WriteLine("Etap 2: RW: błąd dla FZ: " + item?.Context?.FzNumer);
+                            continue;
+                        }
+
+                        liczbaRw++;
+                        liczbaPozycjiRw += item.DaneDoRw.Pozycje.Count;
                     }
+
+                    _logger.AddLog("SUCCESS", "Etap 2: Wystawiono " + liczbaRw + " RW dla " + liczbaPozycjiRw + " pozycji", new { liczbaRw, liczbaPozycji = liczbaPozycjiRw });
                 }
+            }
+            catch (FatalSubiektException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
                 Console.WriteLine("Etap 2: Błąd podczas wysyłki webhooka: " + ex.Message);
+                _logger.AddLog("ERROR", "Etap 2: Błąd podczas wysyłki webhooka", new { stackTrace = ex.ToString() });
             }
         }
 
-        private static void UtworzDokumentRW(dynamic subiekt, string connectionString, string opis, List<RwPozycja> pozycje)
+        private static RwCreateResult UtworzDokumentRW(dynamic subiekt, string connectionString, string opis, List<RwPozycja> pozycje)
         {
+            var result = new RwCreateResult
+            {
+                Success = false,
+                IsFatal = false,
+                Errors = new List<string>(),
+                ExceptionDetails = null
+            };
             try
             {
                 if (subiekt == null)
                 {
                     Console.WriteLine("Etap 2: RW: Brak połączenia z Subiektem GT");
-                    return;
+                    result.Errors.Add("Brak połączenia z Subiektem GT");
+                    result.IsFatal = true;
+                    return result;
                 }
 
                 Console.WriteLine("Etap 2: RW: Start");
                 if (pozycje == null || pozycje.Count == 0)
                 {
                     Console.WriteLine("Etap 2: RW: Brak pozycji do dodania");
-                    return;
+                    result.Errors.Add("Brak pozycji do dodania");
+                    return result;
                 }
 
                 Console.WriteLine("Etap 2: RW: Tworzenie dokumentu RW");
-            dynamic dok = UtworzDokumentRwRoboczy(subiekt);
-            if (dok == null)
-            {
-                Console.WriteLine("Etap 2: RW: Nie udało się utworzyć dokumentu RW");
-                return;
-            }
+                dynamic dok = UtworzDokumentRwRoboczy(subiekt);
+                if (dok == null)
+                {
+                    Console.WriteLine("Etap 2: RW: Nie udało się utworzyć dokumentu RW");
+                    result.Errors.Add("Nie udało się utworzyć dokumentu RW");
+                    result.IsFatal = true;
+                    return result;
+                }
                 Console.WriteLine("Etap 2: RW: Dokument RW utworzony w buforze");
                 try
                 {
@@ -544,12 +614,14 @@ ORDER BY d.dok_DataWyst DESC";
                     if (string.IsNullOrWhiteSpace(symbol))
                     {
                         Console.WriteLine("Etap 2: RW: Pominięto pozycję bez symbolu");
+                        result.Errors.Add("Pominięto pozycję bez symbolu");
                         continue;
                     }
 
                     if (!TryParseDecimal(pozycja?.IloscLaczna, out var ilosc))
                     {
                         Console.WriteLine("Etap 2: RW: Nieprawidłowa ilość dla: " + symbol);
+                        result.Errors.Add("Nieprawidłowa ilość dla: " + symbol);
                         continue;
                     }
 
@@ -558,6 +630,7 @@ ORDER BY d.dok_DataWyst DESC";
                     if (towar == null)
                     {
                         Console.WriteLine("Etap 2: RW: Towar nie znaleziony: " + symbol);
+                        result.Errors.Add("Towar nie znaleziony: " + symbol);
                         continue;
                     }
 
@@ -572,6 +645,7 @@ ORDER BY d.dok_DataWyst DESC";
                     if (!towarId.HasValue)
                     {
                         Console.WriteLine("Etap 2: RW: Nie udało się ustalić tw_Id dla: " + symbol);
+                        result.Errors.Add("Nie udało się ustalić tw_Id dla: " + symbol);
                         continue;
                     }
                     Console.WriteLine("Etap 2: RW: Ustalono tw_Id: " + towarId.Value);
@@ -580,6 +654,7 @@ ORDER BY d.dok_DataWyst DESC";
                     if (poz == null)
                     {
                         Console.WriteLine("Etap 2: RW: Nie udało się dodać pozycji: " + symbol);
+                        result.Errors.Add("Nie udało się dodać pozycji: " + symbol);
                         continue;
                     }
                     Console.WriteLine("Etap 2: RW: Pozycja dodana: " + symbol);
@@ -592,18 +667,75 @@ ORDER BY d.dok_DataWyst DESC";
                     catch
                     {
                         Console.WriteLine("Etap 2: RW: Nie udało się ustawić IloscJm dla: " + symbol);
+                        result.Errors.Add("Nie udało się ustawić IloscJm dla: " + symbol);
                     }
                 }
+
+                if (result.Errors.Count > 0)
+                {
+                    try { dok.Zamknij(); } catch { }
+                    return result;
+                }
+
                 Console.WriteLine("Etap 2: RW: Zapis dokumentu");
-                dok.Zapisz();
+                try
+                {
+                    dok.Zapisz();
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("Etap 2: Błąd zapisu RW: " + ex.Message);
+                    result.Errors.Add(ex.Message);
+                    result.ExceptionDetails = ex.ToString();
+                    result.IsFatal = IsFatalSubiektError(ex);
+                    return result;
+                }
                 Console.WriteLine("Etap 2: RW: Zapis OK");
-                dok.Zamknij();
+                try { dok.Zamknij(); } catch { }
                 Console.WriteLine("Etap 2: RW: Dokument zamknięty");
+                result.Success = true;
+                return result;
             }
             catch (Exception ex)
             {
                 Console.WriteLine("Etap 2: Błąd tworzenia RW: " + ex.ToString());
+                result.Errors.Add(ex.Message);
+                result.ExceptionDetails = ex.ToString();
+                result.IsFatal = IsFatalSubiektError(ex);
+                return result;
             }
+        }
+
+        private static bool IsFatalSubiektError(Exception ex)
+        {
+            if (ex == null)
+            {
+                return false;
+            }
+
+            var message = ex.ToString();
+            if (message.IndexOf("RPC", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return true;
+            }
+            if (message.IndexOf("Sfera", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return true;
+            }
+            if (message.IndexOf("Subiekt", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return true;
+            }
+            if (message.IndexOf("Klasa nie jest zarejestrowana", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return true;
+            }
+            if (message.IndexOf("Class not registered", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return true;
+            }
+
+            return false;
         }
 
         private static dynamic UtworzDokumentRwRoboczy(dynamic subiekt)
