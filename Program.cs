@@ -625,6 +625,11 @@ ORDER BY d.dok_DataWyst DESC";
 
         private static int? PobierzTowarId(dynamic towar, string connectionString, string symbol)
         {
+            if (towar == null)
+            {
+                return null;
+            }
+
             var towarId = PobierzWartoscInt(towar, "Id");
             if (towarId.HasValue)
             {
