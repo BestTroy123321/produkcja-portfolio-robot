@@ -186,9 +186,8 @@ namespace SubiektConnector
                 _logger.AddLog("ERROR", "Brak ustawienia appSettings: ZdWebhookUrl", new { stackTrace = Environment.StackTrace });
                 _logger.AddLog("INFO", "Etap 1: pominięto poprawę ZD, przechodzę do etapu 2");
                 Console.WriteLine("Etap 1: Pominięto poprawę ZD, przechodzę do etapu 2.");
-                _logger.AddLog("INFO", "Etap 2: rozpoczęto tworzenie RW na podstawie FZ");
                 Console.WriteLine("Etap 2: Tworzenie RW na podstawie FZ");
-                ExecuteFzWebhook(connectionString);
+                ExecuteFzWebhook(connectionString, subiekt);
                 return;
             }
 
@@ -279,9 +278,8 @@ namespace SubiektConnector
                 }
             }
 
-            _logger.AddLog("INFO", "Etap 2: rozpoczęto tworzenie RW na podstawie FZ");
             Console.WriteLine("Etap 2: Tworzenie RW na podstawie FZ");
-            ExecuteFzWebhook(connectionString);
+            ExecuteFzWebhook(connectionString, subiekt);
         }
 
         private static string GetSqlQuery()
@@ -332,12 +330,12 @@ WHERE
 ORDER BY d.dok_DataWyst DESC";
         }
 
-        private static void ExecuteFzWebhook(string connectionString)
+        private static void ExecuteFzWebhook(string connectionString, dynamic subiekt)
         {
             var fzWebhookUrl = ConfigurationManager.AppSettings["FzWebhookUrl"];
             if (string.IsNullOrWhiteSpace(fzWebhookUrl))
             {
-                _logger.AddLog("ERROR", "Brak ustawienia appSettings: FzWebhookUrl", new { stackTrace = Environment.StackTrace });
+                Console.WriteLine("Etap 2: Brak ustawienia appSettings: FzWebhookUrl");
                 return;
             }
 
@@ -387,19 +385,17 @@ ORDER BY d.dok_DataWyst DESC";
             catch (Exception ex)
             {
                 Console.WriteLine("Etap 2: Błąd podczas pobierania FZ: " + ex.Message);
-                _logger.AddLog("ERROR", "Etap 2: błąd pobierania FZ", new { stackTrace = ex.ToString() });
                 return;
             }
 
             if (dokumenty.Count == 0)
             {
                 Console.WriteLine("Etap 2: Brak FZ do przetworzenia.");
-                _logger.AddLog("INFO", "Etap 2: brak FZ do przetworzenia");
+                UtworzDokumentRW(subiekt);
                 return;
             }
 
             Console.WriteLine("Etap 2: Znaleziono " + dokumenty.Count + " FZ z " + liczbaPozycji + " produktami.");
-            _logger.AddLog("SUCCESS", "Etap 2: znaleziono " + dokumenty.Count + " FZ z " + liczbaPozycji + " produktami", new { liczbaFz = dokumenty.Count, liczbaPozycji = liczbaPozycji });
 
             var payload = JsonConvert.SerializeObject(new List<FzPayload>(dokumenty.Values));
             try
@@ -413,10 +409,47 @@ ORDER BY d.dok_DataWyst DESC";
             catch (Exception ex)
             {
                 Console.WriteLine("Etap 2: Błąd podczas wysyłki webhooka: " + ex.Message);
-                _logger.AddLog("ERROR", "Etap 2: błąd wysyłki webhooka", new { stackTrace = ex.ToString() });
             }
+            UtworzDokumentRW(subiekt);
         }
 
+        private static void UtworzDokumentRW(dynamic subiekt)
+        {
+            try
+            {
+                Console.WriteLine("Etap 2: Tworzenie dokumentu RW z pozycją OP-L-15-TRANSP x1");
+                dynamic dok = subiekt.Dokumenty.Dodaj(13);
+                try
+                {
+                    dok.Uwagi = "AUTO-RW: OP-L-15-TRANSP";
+                }
+                catch
+                {
+                }
+                dynamic poz = dok.Pozycje.Dodaj();
+                try
+                {
+                    poz.TowarSymbol = "OP-L-15-TRANSP";
+                }
+                catch
+                {
+                }
+                try
+                {
+                    poz.Ilosc = 1m;
+                }
+                catch
+                {
+                }
+                dok.Zapisz();
+                dok.Zamknij();
+                Console.WriteLine("Etap 2: Dokument RW utworzony");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Etap 2: Błąd tworzenia RW: " + ex.Message);
+            }
+        }
         private static dynamic ZalogujSubiektGT()
         {
             var sferaServer = ConfigurationManager.AppSettings["SferaServer"];
