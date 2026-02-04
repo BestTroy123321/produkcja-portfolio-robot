@@ -692,7 +692,7 @@ ORDER BY d.dok_DataWyst DESC";
                     }
                     else
                     {
-                        var cenaBiezaca = PobierzCeneBiezaca(poz, towar);
+                        var cenaBiezaca = PobierzCeneBiezaca((object)poz, (object)towar);
                         if (cenaBiezaca.HasValue)
                         {
                             Console.WriteLine("Etap 2: RW: Brak ceny dostawy, pozostawiono cenę z kartoteki: " + symbol);
@@ -847,27 +847,25 @@ ORDER BY d.dok_DataWyst DESC, d.dok_Id DESC", connection))
             return false;
         }
 
-        private static decimal? PobierzCeneBiezaca(dynamic pozycja, dynamic towar)
+        private static decimal? PobierzCeneBiezaca(object pozycja, object towar)
         {
-            object objPoz = pozycja;
-            if (objPoz != null)
+            if (pozycja != null)
             {
-                var cena = PobierzDecimalProperty(objPoz, "CenaNettoPrzedRabatem")
-                    ?? PobierzDecimalProperty(objPoz, "CenaNetto")
-                    ?? PobierzDecimalProperty(objPoz, "CenaNettoPoRabacie");
+                var cena = PobierzDecimalProperty(pozycja, "CenaNettoPrzedRabatem")
+                    ?? PobierzDecimalProperty(pozycja, "CenaNetto")
+                    ?? PobierzDecimalProperty(pozycja, "CenaNettoPoRabacie");
                 if (cena.HasValue)
                 {
                     return cena;
                 }
             }
 
-            object objTowar = towar;
-            if (objTowar != null)
+            if (towar != null)
             {
-                var cena = PobierzDecimalProperty(objTowar, "CenaZakupu")
-                    ?? PobierzDecimalProperty(objTowar, "CenaZakupuNetto")
-                    ?? PobierzDecimalProperty(objTowar, "CenaEwidencyjna")
-                    ?? PobierzDecimalProperty(objTowar, "CenaNetto");
+                var cena = PobierzDecimalProperty(towar, "CenaZakupu")
+                    ?? PobierzDecimalProperty(towar, "CenaZakupuNetto")
+                    ?? PobierzDecimalProperty(towar, "CenaEwidencyjna")
+                    ?? PobierzDecimalProperty(towar, "CenaNetto");
                 return cena;
             }
 
