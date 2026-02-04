@@ -678,22 +678,38 @@ ORDER BY d.dok_DataWyst DESC";
                         cenyDostawyCache[symbol] = cenaDostawy;
                     }
 
-                    if (!cenaDostawy.HasValue)
+                    if (cenaDostawy.HasValue)
                     {
-                        Console.WriteLine("Etap 2: RW: Brak ostatniej ceny dostawy dla: " + symbol);
-                        result.Errors.Add("Brak ostatniej ceny dostawy dla: " + symbol);
-                        continue;
+                        string poleCeny;
+                        if (!UstawCenePozycji(poz, cenaDostawy.Value, out poleCeny))
+                        {
+                            Console.WriteLine("Etap 2: RW: Nie udało się ustawić ceny dostawy dla: " + symbol);
+                        }
+                        else
+                        {
+                            Console.WriteLine("Etap 2: RW: Ustawiono cenę dostawy (" + poleCeny + "): " + cenaDostawy.Value);
+                        }
                     }
-
-                    string poleCeny;
-                    if (!UstawCenePozycji(poz, cenaDostawy.Value, out poleCeny))
+                    else
                     {
-                        Console.WriteLine("Etap 2: RW: Nie udało się ustawić ceny dla: " + symbol);
-                        result.Errors.Add("Nie udało się ustawić ceny dla: " + symbol);
-                        continue;
+                        var cenaBiezaca = PobierzCeneBiezaca(poz, towar);
+                        if (cenaBiezaca.HasValue)
+                        {
+                            Console.WriteLine("Etap 2: RW: Brak ceny dostawy, pozostawiono cenę z kartoteki: " + symbol);
+                        }
+                        else
+                        {
+                            string poleCeny;
+                            if (!UstawCenePozycji(poz, 0m, out poleCeny))
+                            {
+                                Console.WriteLine("Etap 2: RW: Nie udało się ustawić ceny 0 dla: " + symbol);
+                            }
+                            else
+                            {
+                                Console.WriteLine("Etap 2: RW: Ustawiono cenę 0 (" + poleCeny + "): " + symbol);
+                            }
+                        }
                     }
-
-                    Console.WriteLine("Etap 2: RW: Ustawiono cenę (" + poleCeny + "): " + cenaDostawy.Value);
                 }
 
                 if (result.Errors.Count > 0)
@@ -829,6 +845,54 @@ ORDER BY d.dok_DataWyst DESC, d.dok_Id DESC", connection))
             }
 
             return false;
+        }
+
+        private static decimal? PobierzCeneBiezaca(dynamic pozycja, dynamic towar)
+        {
+            object objPoz = pozycja;
+            if (objPoz != null)
+            {
+                var cena = PobierzDecimalProperty(objPoz, "CenaNettoPrzedRabatem")
+                    ?? PobierzDecimalProperty(objPoz, "CenaNetto")
+                    ?? PobierzDecimalProperty(objPoz, "CenaNettoPoRabacie");
+                if (cena.HasValue)
+                {
+                    return cena;
+                }
+            }
+
+            object objTowar = towar;
+            if (objTowar != null)
+            {
+                var cena = PobierzDecimalProperty(objTowar, "CenaZakupu")
+                    ?? PobierzDecimalProperty(objTowar, "CenaZakupuNetto")
+                    ?? PobierzDecimalProperty(objTowar, "CenaEwidencyjna")
+                    ?? PobierzDecimalProperty(objTowar, "CenaNetto");
+                return cena;
+            }
+
+            return null;
+        }
+
+        private static decimal? PobierzDecimalProperty(object obj, string propertyName)
+        {
+            try
+            {
+                var value = obj.GetType().InvokeMember(propertyName, BindingFlags.GetProperty, null, obj, null);
+                if (value == null)
+                {
+                    return null;
+                }
+                if (decimal.TryParse(value.ToString(), out var result))
+                {
+                    return result;
+                }
+            }
+            catch
+            {
+            }
+
+            return null;
         }
 
         private static bool TrySetDecimalProperty(object obj, string propertyName, decimal value)
