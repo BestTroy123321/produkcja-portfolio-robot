@@ -136,6 +136,9 @@ namespace SubiektConnector
         [JsonProperty("ilosc_laczna")]
         public object IloscLaczna { get; set; }
 
+        [JsonProperty("cena_jedn")]
+        public object CenaJedn { get; set; }
+
         [JsonProperty("jednostka")]
         public string Jednostka { get; set; }
     }
@@ -608,8 +611,6 @@ ORDER BY d.dok_DataWyst DESC";
                     Console.WriteLine("Etap 2: RW: Nie udało się ustawić uwag");
                 }
 
-                var cenyDostawyCache = new Dictionary<string, decimal?>(StringComparer.OrdinalIgnoreCase);
-
                 foreach (var pozycja in pozycje)
                 {
                     var symbol = pozycja?.SymbolSurowca;
@@ -672,44 +673,28 @@ ORDER BY d.dok_DataWyst DESC";
                         result.Errors.Add("Nie udało się ustawić IloscJm dla: " + symbol);
                     }
 
-                    if (!cenyDostawyCache.TryGetValue(symbol, out var cenaDostawy))
+                    var cenaJednValue = pozycja?.CenaJedn;
+                    if (cenaJednValue == null)
                     {
-                        cenaDostawy = PobierzOstatniaCeneDostawy(connectionString, symbol);
-                        cenyDostawyCache[symbol] = cenaDostawy;
+                        Console.WriteLine("Etap 2: RW: Brak cena_jedn dla: " + symbol);
+                        result.Errors.Add("Brak cena_jedn dla: " + symbol);
+                        continue;
+                    }
+                    if (!TryParseDecimal(cenaJednValue, out var cenaJedn))
+                    {
+                        Console.WriteLine("Etap 2: RW: Nieprawidłowa cena_jedn dla: " + symbol);
+                        result.Errors.Add("Nieprawidłowa cena_jedn dla: " + symbol);
+                        continue;
                     }
 
-                    if (cenaDostawy.HasValue)
+                    string bladCeny;
+                    if (!TryUstawCeneJedn(poz, cenaJedn, out bladCeny))
                     {
-                        string poleCeny;
-                        if (!UstawCenePozycji(poz, cenaDostawy.Value, out poleCeny))
-                        {
-                            Console.WriteLine("Etap 2: RW: Nie udało się ustawić ceny dostawy dla: " + symbol);
-                        }
-                        else
-                        {
-                            Console.WriteLine("Etap 2: RW: Ustawiono cenę dostawy (" + poleCeny + "): " + cenaDostawy.Value);
-                        }
+                        Console.WriteLine("Etap 2: RW: Nie udało się ustawić ceny dla: " + symbol);
+                        result.Errors.Add(bladCeny);
+                        continue;
                     }
-                    else
-                    {
-                        var cenaBiezaca = PobierzCeneBiezaca((object)poz, (object)towar);
-                        if (cenaBiezaca.HasValue)
-                        {
-                            Console.WriteLine("Etap 2: RW: Brak ceny dostawy, pozostawiono cenę z kartoteki: " + symbol);
-                        }
-                        else
-                        {
-                            string poleCeny;
-                            if (!UstawCenePozycji(poz, 0m, out poleCeny))
-                            {
-                                Console.WriteLine("Etap 2: RW: Nie udało się ustawić ceny 0 dla: " + symbol);
-                            }
-                            else
-                            {
-                                Console.WriteLine("Etap 2: RW: Ustawiono cenę 0 (" + poleCeny + "): " + symbol);
-                            }
-                        }
-                    }
+                    Console.WriteLine("Etap 2: RW: Ustawiono cenę: " + cenaJedn);
                 }
 
                 if (result.Errors.Count > 0)
@@ -777,133 +762,6 @@ ORDER BY d.dok_DataWyst DESC";
             }
 
             return false;
-        }
-
-        private static decimal? PobierzOstatniaCeneDostawy(string connectionString, string symbol)
-        {
-            if (string.IsNullOrWhiteSpace(connectionString) || string.IsNullOrWhiteSpace(symbol))
-            {
-                return null;
-            }
-
-            try
-            {
-                using (var connection = new SqlConnection(connectionString))
-                using (var command = new SqlCommand(@"
-SELECT TOP 1 p.ob_CenaNetto
-FROM dok__Dokument d
-JOIN dok_Pozycja p ON d.dok_Id = p.ob_DokHanId
-JOIN tw__Towar t ON p.ob_TowId = t.tw_Id
-WHERE d.dok_Typ = 1 AND t.tw_Symbol = @symbol
-ORDER BY d.dok_DataWyst DESC, d.dok_Id DESC", connection))
-                {
-                    command.Parameters.AddWithValue("@symbol", symbol);
-                    connection.Open();
-                    var result = command.ExecuteScalar();
-                    if (result == null)
-                    {
-                        return null;
-                    }
-
-                    if (decimal.TryParse(result.ToString(), out var cena))
-                    {
-                        return cena;
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine("Etap 2: RW: Błąd pobierania ostatniej ceny dostawy: " + ex.Message);
-            }
-
-            return null;
-        }
-
-        private static bool UstawCenePozycji(dynamic pozycja, decimal cena, out string pole)
-        {
-            pole = null;
-            object obj = pozycja;
-            if (obj == null)
-            {
-                return false;
-            }
-
-            if (TrySetDecimalProperty(obj, "CenaNettoPrzedRabatem", cena))
-            {
-                pole = "CenaNettoPrzedRabatem";
-                return true;
-            }
-            if (TrySetDecimalProperty(obj, "CenaNetto", cena))
-            {
-                pole = "CenaNetto";
-                return true;
-            }
-            if (TrySetDecimalProperty(obj, "CenaNettoPoRabacie", cena))
-            {
-                pole = "CenaNettoPoRabacie";
-                return true;
-            }
-
-            return false;
-        }
-
-        private static decimal? PobierzCeneBiezaca(object pozycja, object towar)
-        {
-            if (pozycja != null)
-            {
-                var cena = PobierzDecimalProperty(pozycja, "CenaNettoPrzedRabatem")
-                    ?? PobierzDecimalProperty(pozycja, "CenaNetto")
-                    ?? PobierzDecimalProperty(pozycja, "CenaNettoPoRabacie");
-                if (cena.HasValue)
-                {
-                    return cena;
-                }
-            }
-
-            if (towar != null)
-            {
-                var cena = PobierzDecimalProperty(towar, "CenaZakupu")
-                    ?? PobierzDecimalProperty(towar, "CenaZakupuNetto")
-                    ?? PobierzDecimalProperty(towar, "CenaEwidencyjna")
-                    ?? PobierzDecimalProperty(towar, "CenaNetto");
-                return cena;
-            }
-
-            return null;
-        }
-
-        private static decimal? PobierzDecimalProperty(object obj, string propertyName)
-        {
-            try
-            {
-                var value = obj.GetType().InvokeMember(propertyName, BindingFlags.GetProperty, null, obj, null);
-                if (value == null)
-                {
-                    return null;
-                }
-                if (decimal.TryParse(value.ToString(), out var result))
-                {
-                    return result;
-                }
-            }
-            catch
-            {
-            }
-
-            return null;
-        }
-
-        private static bool TrySetDecimalProperty(object obj, string propertyName, decimal value)
-        {
-            try
-            {
-                obj.GetType().InvokeMember(propertyName, BindingFlags.SetProperty, null, obj, new object[] { value });
-                return true;
-            }
-            catch
-            {
-                return false;
-            }
         }
 
         private static dynamic UtworzDokumentRwRoboczy(dynamic subiekt)
@@ -1097,6 +955,55 @@ ORDER BY d.dok_DataWyst DESC, d.dok_Id DESC", connection))
             }
 
             return null;
+        }
+
+        private static bool TryUstawCeneJedn(dynamic pozycja, decimal cena, out string error)
+        {
+            error = null;
+            if (pozycja == null)
+            {
+                error = "Brak obiektu pozycji do ustawienia ceny";
+                return false;
+            }
+
+            var pola = new[]
+            {
+                "CenaNettoPrzedRabatem",
+                "CenaNetto",
+                "Cena",
+                "CenaJedn",
+                "CenaJednostkowa",
+                "CenaNettoJednostkowa"
+            };
+
+            foreach (var pole in pola)
+            {
+                if (UstawWartoscDecimal(pozycja, pole, cena))
+                {
+                    return true;
+                }
+            }
+
+            error = "Nie udało się ustawić ceny (cena_jedn)";
+            return false;
+        }
+
+        private static bool UstawWartoscDecimal(dynamic obiekt, string nazwa, decimal wartosc)
+        {
+            try
+            {
+                object obj = obiekt;
+                if (obj == null)
+                {
+                    return false;
+                }
+                obj.GetType().InvokeMember(nazwa, BindingFlags.SetProperty, null, obj, new object[] { wartosc });
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
         }
         private static dynamic ZalogujSubiektGT()
         {
