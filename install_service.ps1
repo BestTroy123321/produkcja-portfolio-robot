@@ -1,8 +1,8 @@
 # Skrypt instalujący usługę Windows dla SubiektConnector
 # Uruchom ten skrypt jako Administrator (Run as Administrator)
 
-$serviceName = "SubiektConnectorService"
-$displayName = "Subiekt Connector Robot"
+$serviceName = "ProdukcjaPortfolioSubiektConnectorService"
+$displayName = "Produkcja Portfolio Subiekt Connector"
 $description = "Automatyczna synchronizacja Subiekt GT -> Webhook (ZD i RW)"
 $exePath = Join-Path $PSScriptRoot "bin\Debug\net48\SubiektConnector.exe"
 

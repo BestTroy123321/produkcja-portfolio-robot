@@ -308,7 +308,7 @@ namespace SubiektConnector
             public SubiektConnectorService(int intervalMinutes)
             {
                 _intervalMinutes = intervalMinutes;
-                ServiceName = "SubiektConnectorService";
+                ServiceName = "ProdukcjaPortfolioSubiektConnectorService";
                 CanStop = true;
             }
 
