@@ -9,7 +9,6 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using System.Reflection;
 using System.Globalization;
-using System.ServiceProcess;
 using Newtonsoft.Json;
 
 namespace SubiektConnector
@@ -163,95 +162,28 @@ namespace SubiektConnector
     {
         private static LoggerService _logger;
         private static Timer _heartbeatTimer;
-        private static CancellationTokenSource _cancellationTokenSource;
-        private static Thread _workerThread;
 
         [STAThread]
         private static void Main(string[] args)
         {
+            _logger = new LoggerService();
+            _logger.AddLog("INFO", "Uruchomienie robota");
+
             var intervalMinutes = ParseIntSetting(ConfigurationManager.AppSettings["IntervalMinutes"], 30);
             if (intervalMinutes < 1)
             {
                 intervalMinutes = 30;
             }
 
-            if (Environment.UserInteractive)
-            {
-                StartConsole(intervalMinutes);
-                return;
-            }
-
-            ServiceBase.Run(new SubiektConnectorService(intervalMinutes));
-        }
-
-        private static void StartConsole(int intervalMinutes)
-        {
-            _logger = new LoggerService();
-            _logger.AddLog("INFO", "Uruchomienie robota");
             StartHeartbeat();
-            RunLoop(intervalMinutes, CancellationToken.None);
+            RunLoop(intervalMinutes);
         }
 
-        private static void StartService(int intervalMinutes)
-        {
-            _cancellationTokenSource = new CancellationTokenSource();
-            _workerThread = new Thread(() =>
-            {
-                _logger = new LoggerService();
-                _logger.AddLog("INFO", "Uruchomienie robota");
-                StartHeartbeat();
-                RunLoop(intervalMinutes, _cancellationTokenSource.Token);
-            })
-            {
-                IsBackground = true
-            };
-            _workerThread.SetApartmentState(ApartmentState.STA);
-            _workerThread.Start();
-        }
-
-        private static void StopService()
-        {
-            try
-            {
-                _cancellationTokenSource?.Cancel();
-            }
-            catch
-            {
-            }
-
-            try
-            {
-                _heartbeatTimer?.Dispose();
-            }
-            catch
-            {
-            }
-
-            try
-            {
-                if (_workerThread != null)
-                {
-                    _workerThread.Join(TimeSpan.FromSeconds(30));
-                }
-            }
-            catch
-            {
-            }
-
-            try
-            {
-                _logger?.FlushAsync().GetAwaiter().GetResult();
-            }
-            catch
-            {
-            }
-        }
-
-        private static void RunLoop(int intervalMinutes, CancellationToken cancellationToken)
+        private static void RunLoop(int intervalMinutes)
         {
             dynamic subiekt = null;
 
-            while (!cancellationToken.IsCancellationRequested)
+            while (true)
             {
                 try
                 {
@@ -260,12 +192,9 @@ namespace SubiektConnector
                         subiekt = ZalogujSubiektGT();
                         if (subiekt == null)
                         {
-                            _logger?.AddLog("ERROR", "Logowanie do Sfery nie powiodlo sie", new { stackTrace = (string)null });
+                            _logger.AddLog("ERROR", "Logowanie do Sfery nie powiodło się", new { stackTrace = Environment.StackTrace });
                             _logger.FlushAsync().GetAwaiter().GetResult();
-                            if (cancellationToken.WaitHandle.WaitOne(TimeSpan.FromMinutes(intervalMinutes)))
-                            {
-                                break;
-                            }
+                            Thread.Sleep(TimeSpan.FromMinutes(intervalMinutes));
                             continue;
                         }
                     }
@@ -291,35 +220,7 @@ namespace SubiektConnector
                     }
                 }
 
-                if (cancellationToken.WaitHandle.WaitOne(TimeSpan.FromMinutes(intervalMinutes)))
-                {
-                    break;
-                }
-            }
-
-            try { ZakonczSubiekt(subiekt); } catch { }
-            try { Marshal.ReleaseComObject(subiekt); } catch { }
-        }
-
-        private sealed class SubiektConnectorService : ServiceBase
-        {
-            private readonly int _intervalMinutes;
-
-            public SubiektConnectorService(int intervalMinutes)
-            {
-                _intervalMinutes = intervalMinutes;
-                ServiceName = "ProdukcjaPortfolioSubiektConnectorService";
-                CanStop = true;
-            }
-
-            protected override void OnStart(string[] args)
-            {
-                StartService(_intervalMinutes);
-            }
-
-            protected override void OnStop()
-            {
-                StopService();
+                Thread.Sleep(TimeSpan.FromMinutes(intervalMinutes));
             }
         }
 
@@ -336,14 +237,14 @@ namespace SubiektConnector
             if (string.IsNullOrWhiteSpace(connectionString))
             {
                 Console.WriteLine("Brak connection stringa: SubiektDB");
-                _logger?.AddLog("ERROR", "Brak connection stringa: SubiektDB", new { stackTrace = (string)null });
+                _logger.AddLog("ERROR", "Brak connection stringa: SubiektDB", new { stackTrace = Environment.StackTrace });
                 return;
             }
 
             if (string.IsNullOrWhiteSpace(zdWebhookUrl))
             {
                 Console.WriteLine("Brak ustawienia appSettings: ZdWebhookUrl");
-                _logger?.AddLog("ERROR", "Brak ustawienia appSettings: ZdWebhookUrl", new { stackTrace = (string)null });
+                _logger.AddLog("ERROR", "Brak ustawienia appSettings: ZdWebhookUrl", new { stackTrace = Environment.StackTrace });
                 _logger.AddLog("INFO", "Etap 1: pominięto poprawę ZD, przechodzę do etapu 2");
                 Console.WriteLine("Etap 1: Pominięto poprawę ZD, przechodzę do etapu 2.");
                 Console.WriteLine("Etap 2: Tworzenie RW na podstawie FZ");
@@ -497,7 +398,7 @@ ORDER BY d.dok_DataWyst DESC";
             if (string.IsNullOrWhiteSpace(fzWebhookUrl))
             {
                 Console.WriteLine("Etap 2: Brak ustawienia appSettings: FzWebhookUrl");
-                _logger?.AddLog("ERROR", "Etap 2: Brak ustawienia appSettings: FzWebhookUrl", new { stackTrace = (string)null });
+                _logger.AddLog("ERROR", "Etap 2: Brak ustawienia appSettings: FzWebhookUrl", new { stackTrace = Environment.StackTrace });
                 return;
             }
 
@@ -1167,39 +1068,13 @@ ORDER BY d.dok_DataWyst DESC";
                 }
             }
 
-            dynamic subiekt = null;
-            try
-            {
-                subiekt = gt.Uruchom(ParseIntSetting(sferaUruchomDopasuj, 0), ParseIntSetting(sferaUruchomTryb, 2));
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine("Nie udalo sie uruchomic Subiekta: " + ex.Message);
-                _logger?.AddLog("ERROR", "Nie udalo sie uruchomic Subiekta", new { stackTrace = ex.ToString() });
-                return null;
-            }
-
-            if (subiekt == null)
-            {
-                Console.WriteLine("Uruchomienie Subiekta zwrocilo null");
-                _logger?.AddLog("ERROR", "Uruchomienie Subiekta zwrocilo null");
-                return null;
-            }
-
+            dynamic subiekt = gt.Uruchom(ParseIntSetting(sferaUruchomDopasuj, 0), ParseIntSetting(sferaUruchomTryb, 2));
             UkryjOknoSubiekta(subiekt);
 
             var magazynId = ParseIntSetting(sferaMagazynId, 0);
             if (magazynId > 0)
             {
-                try
-                {
-                    subiekt.MagazynId = magazynId;
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine("Nie mozna ustawic MagazynId: " + ex.Message);
-                    _logger?.AddLog("ERROR", "Nie mozna ustawic MagazynId", new { stackTrace = ex.ToString() });
-                }
+                subiekt.MagazynId = magazynId;
             }
 
             return subiekt;
