@@ -1167,13 +1167,39 @@ ORDER BY d.dok_DataWyst DESC";
                 }
             }
 
-            dynamic subiekt = gt.Uruchom(ParseIntSetting(sferaUruchomDopasuj, 0), ParseIntSetting(sferaUruchomTryb, 2));
+            dynamic subiekt = null;
+            try
+            {
+                subiekt = gt.Uruchom(ParseIntSetting(sferaUruchomDopasuj, 0), ParseIntSetting(sferaUruchomTryb, 2));
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Nie udalo sie uruchomic Subiekta: " + ex.Message);
+                _logger?.AddLog("ERROR", "Nie udalo sie uruchomic Subiekta", new { stackTrace = ex.ToString() });
+                return null;
+            }
+
+            if (subiekt == null)
+            {
+                Console.WriteLine("Uruchomienie Subiekta zwrocilo null");
+                _logger?.AddLog("ERROR", "Uruchomienie Subiekta zwrocilo null");
+                return null;
+            }
+
             UkryjOknoSubiekta(subiekt);
 
             var magazynId = ParseIntSetting(sferaMagazynId, 0);
             if (magazynId > 0)
             {
-                subiekt.MagazynId = magazynId;
+                try
+                {
+                    subiekt.MagazynId = magazynId;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("Nie mozna ustawic MagazynId: " + ex.Message);
+                    _logger?.AddLog("ERROR", "Nie mozna ustawic MagazynId", new { stackTrace = ex.ToString() });
+                }
             }
 
             return subiekt;
