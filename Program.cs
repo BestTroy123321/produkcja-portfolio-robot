@@ -9,6 +9,7 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using System.Reflection;
 using System.Globalization;
+using System.ServiceProcess;
 using Newtonsoft.Json;
 
 namespace SubiektConnector
@@ -162,28 +163,95 @@ namespace SubiektConnector
     {
         private static LoggerService _logger;
         private static Timer _heartbeatTimer;
+        private static CancellationTokenSource _cancellationTokenSource;
+        private static Thread _workerThread;
 
         [STAThread]
         private static void Main(string[] args)
         {
-            _logger = new LoggerService();
-            _logger.AddLog("INFO", "Uruchomienie robota");
-
             var intervalMinutes = ParseIntSetting(ConfigurationManager.AppSettings["IntervalMinutes"], 30);
             if (intervalMinutes < 1)
             {
                 intervalMinutes = 30;
             }
 
-            StartHeartbeat();
-            RunLoop(intervalMinutes);
+            if (Environment.UserInteractive)
+            {
+                StartConsole(intervalMinutes);
+                return;
+            }
+
+            ServiceBase.Run(new SubiektConnectorService(intervalMinutes));
         }
 
-        private static void RunLoop(int intervalMinutes)
+        private static void StartConsole(int intervalMinutes)
+        {
+            _logger = new LoggerService();
+            _logger.AddLog("INFO", "Uruchomienie robota");
+            StartHeartbeat();
+            RunLoop(intervalMinutes, CancellationToken.None);
+        }
+
+        private static void StartService(int intervalMinutes)
+        {
+            _cancellationTokenSource = new CancellationTokenSource();
+            _workerThread = new Thread(() =>
+            {
+                _logger = new LoggerService();
+                _logger.AddLog("INFO", "Uruchomienie robota");
+                StartHeartbeat();
+                RunLoop(intervalMinutes, _cancellationTokenSource.Token);
+            })
+            {
+                IsBackground = true
+            };
+            _workerThread.SetApartmentState(ApartmentState.STA);
+            _workerThread.Start();
+        }
+
+        private static void StopService()
+        {
+            try
+            {
+                _cancellationTokenSource?.Cancel();
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                _heartbeatTimer?.Dispose();
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                if (_workerThread != null)
+                {
+                    _workerThread.Join(TimeSpan.FromSeconds(30));
+                }
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                _logger?.FlushAsync().GetAwaiter().GetResult();
+            }
+            catch
+            {
+            }
+        }
+
+        private static void RunLoop(int intervalMinutes, CancellationToken cancellationToken)
         {
             dynamic subiekt = null;
 
-            while (true)
+            while (!cancellationToken.IsCancellationRequested)
             {
                 try
                 {
@@ -194,7 +262,10 @@ namespace SubiektConnector
                         {
                             _logger.AddLog("ERROR", "Logowanie do Sfery nie powiodło się", new { stackTrace = Environment.StackTrace });
                             _logger.FlushAsync().GetAwaiter().GetResult();
-                            Thread.Sleep(TimeSpan.FromMinutes(intervalMinutes));
+                            if (cancellationToken.WaitHandle.WaitOne(TimeSpan.FromMinutes(intervalMinutes)))
+                            {
+                                break;
+                            }
                             continue;
                         }
                     }
@@ -220,7 +291,35 @@ namespace SubiektConnector
                     }
                 }
 
-                Thread.Sleep(TimeSpan.FromMinutes(intervalMinutes));
+                if (cancellationToken.WaitHandle.WaitOne(TimeSpan.FromMinutes(intervalMinutes)))
+                {
+                    break;
+                }
+            }
+
+            try { ZakonczSubiekt(subiekt); } catch { }
+            try { Marshal.ReleaseComObject(subiekt); } catch { }
+        }
+
+        private sealed class SubiektConnectorService : ServiceBase
+        {
+            private readonly int _intervalMinutes;
+
+            public SubiektConnectorService(int intervalMinutes)
+            {
+                _intervalMinutes = intervalMinutes;
+                ServiceName = "SubiektConnectorService";
+                CanStop = true;
+            }
+
+            protected override void OnStart(string[] args)
+            {
+                StartService(_intervalMinutes);
+            }
+
+            protected override void OnStop()
+            {
+                StopService();
             }
         }
 
