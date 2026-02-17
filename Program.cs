@@ -260,7 +260,7 @@ namespace SubiektConnector
                         subiekt = ZalogujSubiektGT();
                         if (subiekt == null)
                         {
-                            _logger?.AddLog("ERROR", "Logowanie do Sfery nie powiodlo sie", new { stackTrace = GetSafeStackTrace() });
+                            _logger?.AddLog("ERROR", "Logowanie do Sfery nie powiodlo sie", new { stackTrace = (string)null });
                             _logger.FlushAsync().GetAwaiter().GetResult();
                             if (cancellationToken.WaitHandle.WaitOne(TimeSpan.FromMinutes(intervalMinutes)))
                             {
@@ -336,14 +336,14 @@ namespace SubiektConnector
             if (string.IsNullOrWhiteSpace(connectionString))
             {
                 Console.WriteLine("Brak connection stringa: SubiektDB");
-                _logger?.AddLog("ERROR", "Brak connection stringa: SubiektDB", new { stackTrace = GetSafeStackTrace() });
+                _logger?.AddLog("ERROR", "Brak connection stringa: SubiektDB", new { stackTrace = (string)null });
                 return;
             }
 
             if (string.IsNullOrWhiteSpace(zdWebhookUrl))
             {
                 Console.WriteLine("Brak ustawienia appSettings: ZdWebhookUrl");
-                _logger?.AddLog("ERROR", "Brak ustawienia appSettings: ZdWebhookUrl", new { stackTrace = GetSafeStackTrace() });
+                _logger?.AddLog("ERROR", "Brak ustawienia appSettings: ZdWebhookUrl", new { stackTrace = (string)null });
                 _logger.AddLog("INFO", "Etap 1: pominięto poprawę ZD, przechodzę do etapu 2");
                 Console.WriteLine("Etap 1: Pominięto poprawę ZD, przechodzę do etapu 2.");
                 Console.WriteLine("Etap 2: Tworzenie RW na podstawie FZ");
@@ -497,7 +497,7 @@ ORDER BY d.dok_DataWyst DESC";
             if (string.IsNullOrWhiteSpace(fzWebhookUrl))
             {
                 Console.WriteLine("Etap 2: Brak ustawienia appSettings: FzWebhookUrl");
-                _logger?.AddLog("ERROR", "Etap 2: Brak ustawienia appSettings: FzWebhookUrl", new { stackTrace = GetSafeStackTrace() });
+                _logger?.AddLog("ERROR", "Etap 2: Brak ustawienia appSettings: FzWebhookUrl", new { stackTrace = (string)null });
                 return;
             }
 
@@ -1225,18 +1225,6 @@ ORDER BY d.dok_DataWyst DESC";
             }
 
             return defaultValue;
-        }
-
-        private static string GetSafeStackTrace()
-        {
-            try
-            {
-                return Environment.StackTrace;
-            }
-            catch
-            {
-                return null;
-            }
         }
 
         private static void StartHeartbeat()
