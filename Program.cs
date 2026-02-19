@@ -304,11 +304,18 @@ namespace SubiektConnector
             var payload = JsonConvert.SerializeObject(new List<DokumentPayload>(dokumenty.Values));
             Console.WriteLine("Wysyłanie do n8n...");
 
+            var httpTimeoutSeconds = GetHttpTimeoutSeconds();
             using (var httpClient = new HttpClient())
             using (var content = new StringContent(payload, Encoding.UTF8, "application/json"))
             {
+                httpClient.Timeout = TimeSpan.FromSeconds(httpTimeoutSeconds);
+                _logger.AddLog("INFO", "Etap 1: Start wysyłki do webhooka", new { url = zdWebhookUrl, payloadLength = payload.Length, httpTimeoutSeconds });
+                var sendStopwatch = Stopwatch.StartNew();
                 var response = httpClient.PostAsync(zdWebhookUrl, content).GetAwaiter().GetResult();
                 var responseBody = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                sendStopwatch.Stop();
+                Console.WriteLine("Etap 1: Koniec wysyłki do webhooka, czas: " + sendStopwatch.ElapsedMilliseconds + " ms");
+                _logger.AddLog("INFO", "Etap 1: Koniec wysyłki do webhooka", new { elapsedMs = sendStopwatch.ElapsedMilliseconds, statusCode = (int)response.StatusCode });
 
                 Console.WriteLine("Odpowiedź serwera: " + (int)response.StatusCode + " " + response.ReasonPhrase);
                 if (response.StatusCode != HttpStatusCode.OK)
@@ -403,6 +410,17 @@ ORDER BY d.dok_DataWyst DESC";
             return 120;
         }
 
+        private static int GetHttpTimeoutSeconds()
+        {
+            var value = ConfigurationManager.AppSettings["HttpTimeoutSeconds"];
+            if (int.TryParse(value, out var seconds) && seconds > 0)
+            {
+                return seconds;
+            }
+
+            return 60;
+        }
+
         private static void ExecuteFzWebhook(string connectionString, dynamic subiekt)
         {
             _logger.AddLog("INFO", "Etap 2: rozpoczęto tworzenie RW na podstawie FZ");
@@ -486,13 +504,20 @@ ORDER BY d.dok_DataWyst DESC";
             var payload = JsonConvert.SerializeObject(new List<FzPayload>(dokumenty.Values));
             try
             {
+                var httpTimeoutSeconds = GetHttpTimeoutSeconds();
                 using (var httpClient = new HttpClient())
                 using (var content = new StringContent(payload, Encoding.UTF8, "application/json"))
                 {
+                    httpClient.Timeout = TimeSpan.FromSeconds(httpTimeoutSeconds);
                     Console.WriteLine("Etap 2: Webhook URL: " + fzWebhookUrl);
                     Console.WriteLine("Etap 2: Wysyłanie do webhooka, rozmiar payloadu: " + payload.Length);
+                    _logger.AddLog("INFO", "Etap 2: Start wysyłki do webhooka", new { url = fzWebhookUrl, payloadLength = payload.Length, httpTimeoutSeconds });
+                    var sendStopwatch = Stopwatch.StartNew();
                     var response = httpClient.PostAsync(fzWebhookUrl, content).GetAwaiter().GetResult();
                     var responseBody = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                    sendStopwatch.Stop();
+                    Console.WriteLine("Etap 2: Koniec wysyłki do webhooka, czas: " + sendStopwatch.ElapsedMilliseconds + " ms");
+                    _logger.AddLog("INFO", "Etap 2: Koniec wysyłki do webhooka", new { elapsedMs = sendStopwatch.ElapsedMilliseconds, statusCode = (int)response.StatusCode });
                     Console.WriteLine("Etap 2: Odpowiedź webhooka: " + (int)response.StatusCode + " " + response.ReasonPhrase);
                     Console.WriteLine("Etap 2: Rozmiar odpowiedzi: " + (responseBody == null ? 0 : responseBody.Length));
                     if (response.StatusCode != HttpStatusCode.OK)
@@ -1143,10 +1168,18 @@ ORDER BY d.dok_DataWyst DESC";
                     };
 
                     var payload = JsonConvert.SerializeObject(payloadObj);
+                    var httpTimeoutSeconds = GetHttpTimeoutSeconds();
                     using (var httpClient = new HttpClient())
                     using (var content = new StringContent(payload, Encoding.UTF8, "application/json"))
                     {
+                        httpClient.Timeout = TimeSpan.FromSeconds(httpTimeoutSeconds);
+                        Console.WriteLine("Heartbeat: Start wysyłki");
+                        _logger?.AddLog("INFO", "Heartbeat: Start wysyłki", new { url = heartbeatUrl, httpTimeoutSeconds });
+                        var sendStopwatch = Stopwatch.StartNew();
                         httpClient.PostAsync(heartbeatUrl, content).GetAwaiter().GetResult();
+                        sendStopwatch.Stop();
+                        Console.WriteLine("Heartbeat: Koniec wysyłki, czas: " + sendStopwatch.ElapsedMilliseconds + " ms");
+                        _logger?.AddLog("INFO", "Heartbeat: Koniec wysyłki", new { elapsedMs = sendStopwatch.ElapsedMilliseconds });
                     }
                 }
                 catch

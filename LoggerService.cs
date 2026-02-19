@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Configuration;
+using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Net.Http;
@@ -65,12 +66,18 @@ namespace SubiektConnector
             }
 
             var payload = JsonConvert.SerializeObject(_logs);
+            var httpTimeoutSeconds = GetHttpTimeoutSeconds();
             try
             {
                 using (var httpClient = new HttpClient())
                 using (var content = new StringContent(payload, Encoding.UTF8, "application/json"))
                 {
+                    httpClient.Timeout = TimeSpan.FromSeconds(httpTimeoutSeconds);
+                    Console.WriteLine("Logi: Start wysyłki do webhooka");
+                    var sendStopwatch = Stopwatch.StartNew();
                     var response = await httpClient.PostAsync(_logWebhookUrl, content);
+                    sendStopwatch.Stop();
+                    Console.WriteLine("Logi: Koniec wysyłki do webhooka, czas: " + sendStopwatch.ElapsedMilliseconds + " ms, status: " + (int)response.StatusCode);
                     if (response.StatusCode == HttpStatusCode.OK)
                     {
                         if (File.Exists(_pendingFilePath))
@@ -82,11 +89,23 @@ namespace SubiektConnector
                     }
                 }
             }
-            catch
+            catch (Exception ex)
             {
+                Console.WriteLine("Logi: Błąd wysyłki do webhooka: " + ex.Message);
             }
 
             ZapiszPending();
+        }
+
+        private static int GetHttpTimeoutSeconds()
+        {
+            var value = ConfigurationManager.AppSettings["HttpTimeoutSeconds"];
+            if (int.TryParse(value, out var seconds) && seconds > 0)
+            {
+                return seconds;
+            }
+
+            return 60;
         }
 
         private void ZapiszPending()
