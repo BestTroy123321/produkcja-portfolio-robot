@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Configuration;
 using System.Data.SqlClient;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http;
 using System.Text;
@@ -360,7 +361,7 @@ JOIN sl_GrupaTw g ON t.tw_IdGrupa = g.grt_Id
 WHERE 
     d.dok_Typ = 15
     AND d.dok_Status IN (5, 6, 7) 
-    AND d.dok_DataWyst >= DATEADD(hour, -168, GETDATE()) 
+    AND d.dok_DataWyst >= DATEADD(hour, -48, GETDATE()) 
     AND g.grt_Nazwa = 'KONFEKCJA' 
 ORDER BY d.dok_DataWyst DESC";
         }
@@ -381,7 +382,7 @@ JOIN tw__Towar t ON p.ob_TowId = t.tw_Id
 WHERE 
     d.dok_Typ = 1
     AND t.tw_IdGrupa = 263
-    AND d.dok_DataWyst >= DATEADD(day, -4, GETDATE())
+    AND d.dok_DataWyst >= DATEADD(day, -2, GETDATE())
     AND NOT EXISTS ( 
         SELECT 1 
         FROM dok__Dokument rw 
@@ -389,6 +390,17 @@ WHERE
         AND rw.dok_Uwagi LIKE '%AUTO-RW: ' + d.dok_NrPelny + '%' 
     ) 
 ORDER BY d.dok_DataWyst DESC";
+        }
+
+        private static int GetSqlCommandTimeoutSeconds()
+        {
+            var value = ConfigurationManager.AppSettings["SqlCommandTimeoutSeconds"];
+            if (int.TryParse(value, out var seconds) && seconds > 0)
+            {
+                return seconds;
+            }
+
+            return 120;
         }
 
         private static void ExecuteFzWebhook(string connectionString, dynamic subiekt)
@@ -404,12 +416,16 @@ ORDER BY d.dok_DataWyst DESC";
 
             var dokumenty = new Dictionary<int, FzPayload>();
             var liczbaPozycji = 0;
+            var timeoutSeconds = GetSqlCommandTimeoutSeconds();
+            var stopwatch = new Stopwatch();
 
             try
             {
                 using (var connection = new SqlConnection(connectionString))
                 using (var command = new SqlCommand(GetFzSqlQuery(), connection))
                 {
+                    command.CommandTimeout = timeoutSeconds;
+                    stopwatch.Start();
                     connection.Open();
 
                     using (var reader = command.ExecuteReader())
@@ -443,12 +459,17 @@ ORDER BY d.dok_DataWyst DESC";
                             liczbaPozycji++;
                         }
                     }
+
+                    stopwatch.Stop();
+                    Console.WriteLine("Etap 2: Zapytanie FZ wykonane w " + stopwatch.ElapsedMilliseconds + " ms, timeout: " + timeoutSeconds + " s");
+                    _logger.AddLog("INFO", "Etap 2: Czas zapytania FZ", new { milliseconds = stopwatch.ElapsedMilliseconds, timeoutSeconds });
                 }
             }
             catch (Exception ex)
             {
+                stopwatch.Stop();
                 Console.WriteLine("Etap 2: Błąd podczas pobierania FZ: " + ex.Message);
-                _logger.AddLog("ERROR", "Etap 2: Błąd podczas pobierania FZ", new { stackTrace = ex.ToString() });
+                _logger.AddLog("ERROR", "Etap 2: Błąd podczas pobierania FZ", new { stackTrace = ex.ToString(), timeoutSeconds, elapsedMs = stopwatch.ElapsedMilliseconds });
                 return;
             }
 
